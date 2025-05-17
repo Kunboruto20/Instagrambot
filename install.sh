@@ -4,4 +4,4 @@ pkg update -y && pkg upgrade -y
 pkg install -y nodejs git
 npm install instagram-private-api readline
 npm install --production
-node index.js
+node index.cjs
