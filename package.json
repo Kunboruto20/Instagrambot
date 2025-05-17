@@ -5,7 +5,7 @@
   "main": "index.cjs",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.cjs"
   },
   "dependencies": {
     "instagram-private-api": "^1.54.2",
