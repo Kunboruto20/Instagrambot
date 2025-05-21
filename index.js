@@ -1,3 +1,309 @@
 #!/usr/bin/env node
 
-const _0x2b8846=_0x3eb0,_0x4b00f1=_0x3eb0,_0x5f57f0=_0x3eb0;(function(_0x3497aa,_0x2b0c97){const _0x1d7121={_0x33627b:'0x169'},_0x551f06=_0x3eb0,_0x16183d=_0x3eb0,_0x280e01=_0x3eb0,_0x1854e9=_0x3eb0,_0x28ab34=_0x3eb0,_0x1bc9be=_0x3eb0,_0x1ce39e=_0x3eb0,_0x241a1d=_0x3eb0,_0xc2afac=_0x3eb0,_0xc2ba60=_0x3eb0,_0x44edf8=_0x3497aa();while(!![]){try{const _0x459ab4=parseInt(_0x551f06('0x181'))/0x1+-parseInt(_0x16183d('0x127'))/0x2*(parseInt(_0x16183d('0x133'))/0x3)+-parseInt(_0x280e01(_0x1d7121._0x33627b))/0x4+-parseInt(_0x1854e9('0x11c'))/0x5*(parseInt(_0x28ab34('0xfb'))/0x6)+parseInt(_0x28ab34('0x177'))/0x7*(-parseInt(_0x280e01('0x138'))/0x8)+-parseInt(_0x1bc9be('0x1b0'))/0x9+parseInt(_0x241a1d('0xef'))/0xa;if(_0x459ab4===_0x2b0c97)break;else _0x44edf8['push'](_0x44edf8['shift']());}catch(_0x1f64a0){_0x44edf8['push'](_0x44edf8['shift']());}}}(_0x6e86,0x44c8d));const _0x56c4ea=(function(){let _0x35cce4=!![];return function(_0x2abe3e,_0x72abb){const _0x1da083=_0x35cce4?function(){const _0xa33a24=_0x3eb0;if(_0x72abb){const _0x4f2cf0=_0x72abb[_0xa33a24('0x11a')](_0x2abe3e,arguments);return _0x72abb=null,_0x4f2cf0;}}:function(){};return _0x35cce4=![],_0x1da083;};}());(function(){_0x56c4ea(this,function(){const _0x4a857e=_0x3eb0,_0x481725=_0x3eb0,_0x19867d=_0x3eb0,_0x5b361f=_0x3eb0,_0x2e4009=_0x3eb0,_0x3df7d9=_0x3eb0,_0x589ea1=_0x3eb0,_0x4bd4a8=_0x3eb0,_0x2e30df=_0x3eb0,_0x61ab84=new RegExp(_0x4a857e('0x154')+_0x4a857e('0x175')),_0x277bbb=new RegExp(_0x19867d('0x102')+_0x4a857e('0x150')+_0x2e4009('0x19b')+_0x5b361f('0x160'),'i'),_0x492f02=_0x298185(_0x19867d('0x17f'));!_0x61ab84[_0x589ea1('0x148')](_0x492f02+_0x2e4009('0x19d'))||!_0x277bbb['test'](_0x492f02+'input')?_0x492f02('0'):_0x298185();})();}());const {IgApiClient}=require(_0x2b8846('0x174')+'private-ap'+'i'),readline=require(_0x2b8846('0x196')),fs=require('fs'),http=require('http'),CREDENTIALS_FILE='./ig_creds'+_0x2b8846('0x185');function askQuestion(_0x3c6055){const _0x3138f9=_0x4b00f1,_0x131244=_0x4b00f1,_0x478253=_0x4b00f1,_0x2d016e=readline[_0x3138f9('0x1a0')+_0x3138f9('0x111')]({'input':process[_0x478253('0xf9')],'output':process['stdout']});return new Promise(_0x462e08=>{_0x2d016e['question'](_0x3c6055,_0x2c00f2=>{const _0x276b20=_0x3eb0,_0x58194d=_0x3eb0;_0x2d016e[_0x276b20('0x165')](),_0x462e08(_0x2c00f2[_0x276b20('0x10c')]());});});}function delay(_0x2a6622){return new Promise(_0x5c4afa=>setTimeout(_0x5c4afa,_0x2a6622));}async function isOnline(){return new Promise(_0x1adbc6=>{const _0xb72660=_0x3eb0,_0x1700e4=_0x3eb0,_0xf75ec5=_0x3eb0,_0x4cafda=_0x3eb0,_0x6dc5ba=_0x3eb0,_0x3a71f5=http[_0xb72660('0x18c')]('http://cli'+_0xb72660('0x15b')+'le.com/gen'+_0xb72660('0x108'),()=>{_0x1adbc6(!![]);});_0x3a71f5['on'](_0x4cafda('0x159'),()=>_0x1adbc6(![])),_0x3a71f5[_0x6dc5ba('0xf1')](0x1388,()=>{const _0xb016f=_0xb72660;_0x3a71f5[_0xb016f('0x17c')](),_0x1adbc6(![]);});});}async function waitForNetwork(){const _0x25d66b={_0x3edbd4:'0x1ac'},_0x3f6f0d=_0x5f57f0,_0x37ea66=_0x2b8846,_0x24acc7=_0x4b00f1,_0x25eb81=_0x2b8846,_0x540e5c=_0x4b00f1,_0x1a8e14=_0x2b8846,_0x4ae9f9=_0x4b00f1,_0x400573=_0x5f57f0,_0x5d8422=_0x4b00f1,_0x45c630=_0x4b00f1;console[_0x3f6f0d('0x123')](_0x37ea66('0x157')+_0x24acc7(_0x25d66b._0x3edbd4)+_0x3f6f0d('0x15e')+_0x3f6f0d('0xf6')+'a\x20la\x20inter'+'net...');while(!await isOnline()){console[_0x3f6f0d('0x123')]('Network\x20st'+'ill\x20down,\x20'+'retrying\x20i'+'n\x2010\x20secon'+'ds...'),await delay(0x2710);}console[_0x3f6f0d('0x123')](_0x1a8e14('0x157')+_0x3f6f0d('0x14e')+_0x1a8e14('0x193')+'rimiterea\x20'+_0x45c630('0x168')+_0x3f6f0d('0x12f'));}async function safeSend(_0x5e89f8,..._0x9c8a94){const _0x3f1fc3=_0x4b00f1,_0x278629=_0x5f57f0,_0x4b4e5f=_0x2b8846,_0x5ae47c=_0x4b00f1,_0x4c2312=_0x4b00f1,_0x4014bc=_0x2b8846,_0x121665=_0x4b00f1;while(!![]){try{await _0x5e89f8(..._0x9c8a94);return;}catch(_0x3caa4c){!await isOnline()?(console[_0x3f1fc3('0x159')]('Internetul'+'\x20s-a\x20pierd'+_0x3f1fc3('0x15e')+_0x3f1fc3('0xf6')+_0x5ae47c('0x190')+'net...'),await waitForNetwork()):(console['error'](_0x4c2312('0x15a')+'untered:',_0x3caa4c['message'],_0x4c2312('0xf2')+'ăm\x20după\x205\x20'+_0x121665('0x1a6')),await delay(0x1388));}}}async function reLogin(_0x3a0b85){const _0x4c18bf={_0x5ecbd2:'0x1b4'},_0xc436cc=_0x4b00f1,_0xa52d4d=_0x4b00f1,_0x437c47=_0x5f57f0,_0x4d7495=_0x5f57f0,_0x34f3a2=_0x4b00f1,_0x4a22cd=_0x5f57f0,_0x38a60f=_0x4b00f1,_0x9ec095=_0x5f57f0,_0x1ed381=_0x2b8846,_0x3a000b=_0x5f57f0;while(!![]){console[_0xc436cc('0x123')](_0xc436cc('0x172')+_0x437c47('0x14b')+_0x437c47('0x17b')+_0x34f3a2('0x153')+'red.');const _0x566ea7=await askQuestion(_0x4a22cd('0xeb')+_0x38a60f('0x115')+'\x20email\x20or\x20'+_0x437c47('0x12a')+_0x4a22cd('0x156')),_0x3023a4=await askQuestion(_0xc436cc('0xeb')+_0x4d7495('0x115')+_0x1ed381('0x112')+'\x20');_0x3a0b85[_0x9ec095('0x118')][_0x34f3a2('0x14a')+'vice'](_0x566ea7);try{await _0x3a0b85[_0x4a22cd('0x126')]['login'](_0x566ea7,_0x3023a4),console[_0x1ed381('0x123')](_0x1ed381(_0x4c18bf._0x5ecbd2)+_0x9ec095('0x119'));const _0x26ccea=await _0x3a0b85['state'][_0x4d7495('0x194')+_0x3a000b('0x167')](),_0x4e0f6b={'username':_0x566ea7,'password':_0x3023a4,'cookies':_0x26ccea};fs['writeFileS'+_0xa52d4d('0x146')](CREDENTIALS_FILE,JSON[_0x4d7495('0x130')](_0x4e0f6b,null,0x2));break;}catch(_0x5d55d3){console['error']('Login\x20fail'+_0xa52d4d('0x163')+_0xc436cc('0x189')+_0x38a60f('0x173'),_0x5d55d3[_0xa52d4d('0x14f')]),await delay(0x2710);}}}async function initInstagram(){const _0x531c5c={_0x3f2d71:'0x134',_0x130ce9:'0x118',_0x502ebd:'0x14a'},_0x2da705=_0x2b8846,_0x14151e=_0x2b8846,_0x1dc7ac=_0x4b00f1,_0x59f7bb=_0x5f57f0,_0x3fd71e=_0x4b00f1,_0x16c843=_0x4b00f1,_0x7a65ed=_0x2b8846,_0x2e4e12=_0x2b8846,_0x120b35=_0x4b00f1,_0x14022b=_0x5f57f0,_0x517666=new IgApiClient();_0x517666[_0x2da705('0x178')][_0x14151e('0x12c')]=!![];let _0x1ef185=null;if(fs[_0x14151e('0x166')](CREDENTIALS_FILE))try{_0x1ef185=JSON[_0x14151e('0x184')](fs['readFileSy'+'nc'](CREDENTIALS_FILE,'utf8'));}catch(_0x54ecc0){console[_0x59f7bb('0x159')](_0x14151e('0x199')+_0x14151e(_0x531c5c._0x3f2d71)+_0x2e4e12('0x1a1')+':',_0x54ecc0[_0x7a65ed('0x14f')]);}if(_0x1ef185&&_0x1ef185[_0x2da705('0x187')]&&_0x1ef185['password']&&_0x1ef185[_0x1dc7ac('0x198')]){let _0x410395=await askQuestion('Contul\x20sal'+_0x120b35('0x100')+_0x1ef185['username']+(_0x2da705('0x16f')+'folosești\x20'+_0x14151e('0x161')+_0x7a65ed('0x114')+'\x20'));if(_0x410395['toLowerCas'+'e']()==='da'){_0x517666[_0x3fd71e(_0x531c5c._0x130ce9)][_0x2e4e12(_0x531c5c._0x502ebd)+_0x3fd71e('0x186')](_0x1ef185[_0x2da705('0x187')]);try{await _0x517666[_0x14022b('0x118')][_0x14151e('0x10f')+_0x7a65ed('0x103')](JSON[_0x120b35('0x130')](_0x1ef185['cookies']));const _0x35a708=await _0x517666[_0x2da705('0x126')][_0x14022b('0x1ab')+'r']();console['log'](_0x14151e('0x107')+'as:\x20'+_0x35a708[_0x2e4e12('0x187')]);}catch(_0xc06dc8){console[_0x14151e('0x159')](_0x59f7bb('0x172')+_0x120b35('0x122')+_0x16c843('0x1ad')+_0x59f7bb('0xf0')+_0x2da705('0x10a')+_0x59f7bb('0xf3')+'.');try{await _0x517666[_0x2e4e12('0x126')]['login'](_0x1ef185['username'],_0x1ef185[_0x16c843('0x143')]),console[_0x14022b('0x123')](_0x120b35('0x107')+_0x14022b('0x14d')+'ly\x20with\x20sa'+_0x7a65ed('0x121')+_0x14022b('0x10b'));const _0xa8615=await _0x517666[_0x1dc7ac('0x118')][_0x120b35('0x194')+_0x2da705('0x167')](),_0x151eab={'username':_0x1ef185[_0x14022b('0x187')],'password':_0x1ef185['password'],'cookies':_0xa8615};fs['writeFileS'+'ync'](CREDENTIALS_FILE,JSON['stringify'](_0x151eab,null,0x2));}catch(_0x1b37dd){console[_0x59f7bb('0x159')](_0x7a65ed('0x176')+'ailed\x20with'+_0x7a65ed('0xe6')+_0x3fd71e('0x18d')+_0x14022b('0x106')+_0x7a65ed('0xfd')+_0x14151e('0x110')+'.'),await reLogin(_0x517666);}}}else await reLogin(_0x517666);}else await reLogin(_0x517666);return _0x517666;}async function listThreads(_0x566aa0){const _0x1414f6={_0x1c1659:'0x188',_0x1fbbb4:'0x17a',_0x4b941b:'0x152'},_0x3dbae8=_0x2b8846,_0x399832=_0x5f57f0,_0x35454b=_0x4b00f1,_0x53c568=_0x4b00f1,_0x829a9d=_0x5f57f0,_0x15f7c4=_0x2b8846,_0xe083b7=_0x5f57f0,_0x251e7d=_0x5f57f0,_0x15d15b=_0x2b8846,_0x449d76=_0x2b8846;try{const _0x3fdd24=_0x566aa0[_0x3dbae8('0x16e')][_0x399832('0x1a3')+'x'](),_0x5e0832=await _0x3fdd24['items']();if(!_0x5e0832||_0x5e0832[_0x3dbae8('0x19a')]===0x0)return console[_0x35454b('0x123')](_0x399832('0x1af')+_0x3dbae8('0x16c')),[];console[_0x15f7c4('0x123')](_0x251e7d('0x12e')+'n,\x20acestea'+_0x15f7c4('0x183')+_0x35454b('0x1a7')+_0x53c568('0x145')+'u,\x20selecte'+'ază\x20grupur'+_0x15d15b('0x139'));const _0x119ef7=[];return _0x5e0832[_0x251e7d('0xfe')]((_0x296817,_0x385496)=>{const _0xf4505d=_0x829a9d,_0x215e5d=_0x53c568,_0x17e0eb=_0x829a9d,_0x230d0e=_0x15f7c4,_0x15f3a0=_0x3dbae8,_0x3a88d4=_0x3dbae8,_0x5df70c=_0x15d15b;if(!_0x296817||!_0x296817[_0xf4505d(_0x1414f6._0x1c1659)])return;const _0x52e715=_0x296817[_0x215e5d('0x15d')+'le']||_0x296817['users']&&_0x296817['users'][_0x215e5d('0x180')](_0x1d9e76=>_0x1d9e76[_0x17e0eb('0x187')])['join'](',\x20')||_0x230d0e(_0x1414f6._0x1fbbb4);console['log'](_0x385496+0x1+'.\x20'+_0x52e715+'\x20(ID:\x20'+_0x296817[_0x3a88d4('0x188')]+')'),_0x119ef7[_0x3a88d4(_0x1414f6._0x4b941b)](_0x296817['thread_id']);}),_0x119ef7;}catch(_0x13865d){return console['error'](_0x35454b('0xfc')+_0x829a9d('0x15c')+'s:',_0x13865d[_0x3dbae8('0x14f')]),[];}}async function sendTextToGroup(_0x466c32,_0x1ebb22,_0x3ae7d8){const _0x34f6c4={_0x265449:'0x1aa'},_0x47cc94=_0x5f57f0,_0xa0675c=_0x4b00f1,_0x29ad06=_0x4b00f1,_0x1d65ee=_0x2b8846,_0x2404b1=_0x4b00f1,_0x26d39d=_0x4b00f1,_0x8bd9c6=_0x2b8846;await _0x466c32['entity'][_0x47cc94('0x128')+'ad'](_0x1ebb22)['broadcastT'+_0x47cc94('0x18e')](_0x3ae7d8),console[_0xa0675c('0x123')](_0x29ad06('0x19e')+_0x1d65ee('0x113')+_0xa0675c(_0x34f6c4._0x265449)+'s\x20Boruto\x20V'+_0xa0675c('0x171'));}async function sendTextToUsers(_0x56e3ec,_0x372fcb,_0x144fed){const _0x2ab5e5=_0x2b8846,_0x34d5b9=_0x4b00f1,_0x5c7b02=_0x4b00f1,_0x37be43=_0x2b8846,_0x4c6c6e=_0x4b00f1,_0x1ab539=_0x5f57f0,_0x197b36=_0x2b8846,_0x446385=_0x2b8846,_0x13158d=_0x5f57f0;await _0x56e3ec[_0x2ab5e5('0x15f')][_0x2ab5e5('0x128')+'ad'](_0x372fcb)[_0x34d5b9('0x179')+_0x2ab5e5('0x18e')](_0x144fed),console[_0x5c7b02('0x123')](_0x4c6c6e('0x19e')+_0x37be43('0x113')+'s\x20cu\x20succe'+_0x1ab539('0x192')+_0x5c7b02('0x171'));}async function sendPhotoToGroup(_0xbb97c2,_0x59f337,_0x3b0a19,_0x20c3d6){const _0x4045fd=_0x2b8846,_0x3fc15c=_0x4b00f1,_0x49c46d=_0x4b00f1,_0x4f4f9e=_0x4b00f1,_0x3d0f57=_0x5f57f0;await _0xbb97c2['entity'][_0x4045fd('0x128')+'ad'](_0x59f337)[_0x4045fd('0xe9')+'hoto']({'file':_0x3b0a19,'caption':_0x20c3d6}),console['log'](_0x4045fd('0x18a')+'t\x20trimisă\x20'+_0x49c46d('0x17d')+_0x3fc15c('0xec')+'\x20autor');}async function sendPhotoToUsers(_0x15abe9,_0x7b150f,_0x5b5b3d,_0x11e943){const _0x1c4e50=_0x5f57f0,_0x4a6d8e=_0x5f57f0,_0x17ca99=_0x4b00f1,_0x3607e0=_0x4b00f1,_0x41728a=_0x5f57f0,_0x2e1918=_0x4b00f1,_0x324511=_0x4b00f1,_0x4d4805=_0x2b8846;await _0x15abe9[_0x1c4e50('0x15f')][_0x1c4e50('0x128')+'ad'](_0x7b150f)[_0x1c4e50('0xe9')+_0x3607e0('0xea')]({'file':_0x5b5b3d,'caption':_0x11e943}),console[_0x4a6d8e('0x123')]('poza\x20a\x20fos'+_0x1c4e50('0x16b')+_0x17ca99('0x17d')+_0x4a6d8e('0xec')+'\x20autor');}function _0x6e86(){const _0xf42332=['Error\x20enco','ents3.goog','ing\x20thread','thread_tit','ut,\x20aștept','entity','$]*)','acest\x20cont','2.\x20Grupuri','ed!\x20Retryi','ite\x20poze\x20n','close','existsSync','ookieJar','de\x20unde\x20am','2248028sohgCz','Niciun\x20uti','t\x20trimisă\x20','ste\x20gol.','\x20thread-ur','feed','.\x20Vrei\x20să\x20','e).\x20Script','pn\x20autor','Session\x20in','econds...','instagram-','\x5c(\x20*\x5c)','Re-login\x20f','7gQtgGt','challenge','broadcastT','N/A','authentica','destroy','cu\x20succes\x20','i\x20numerele','init','map','27731IFLiEm','a\x20început\x20','\x20sunt\x20grup','parse','.json','vice','username','thread_id','ng\x20in\x2010\x20s','poza\x20a\x20fos','toString','get','dentials.\x20','ext','\x0aTrimitere','a\x20la\x20inter','stateObjec','s\x20Boruto\x20V',',\x20reluăm\x20t','serializeC','t\x20(Ctrl+C\x20','readline','gulă):\x20','cookies','Error\x20read','length','0-9a-zA-Z_','Enter\x20Dela','chain','mesajul\x20a\x20','ptul\x20va\x20tr','createInte','tials\x20file','r\x20a\x20începu','directInbo','ead\x20valid\x20','file:','secunde...','urile\x20după','Niciun\x20thr','2.\x20Poze','s\x20cu\x20succe','currentUse','\x20s-a\x20pierd','ercăm\x20re-l','text\x20to\x20ap','Inbox-ul\x20e','1470132QGVZsw','ile:','\x0aUnde\x20vrei','ing\x20photo\x20','Login\x20succ','\x20saved\x20cre','Alege\x20opți','i\x20username','broadcastP','hoto','Enter\x20your','Boruto\x20Vpn','gger','ing\x20text\x20f','15291290lVhNhP','ogin\x20folos','setTimeout','.\x20Reîncerc','\x20salvate..','y\x20seconds\x20','ilor\x20dorit','\x20conexiune','):\x20','\x20error:','stdin','call','31338GFyLEq','Error\x20list','ă\x20introduc','forEach','je\x20non-sto','vat\x20este\x20','(Ctrl+C\x20pe','\x5c+\x5c+\x20*(?:[','eCookieJar','\x20să\x20trimiț','utf8','Te\x20rugăm\x20s','Logged\x20in\x20','erate_204','split','ind\x20datele','tials.','trim','1.\x20Mesaje\x20','in\x20virgulă','deserializ','i\x20date\x20noi','rface','\x20password:','fost\x20trimi','?\x20(da/nu):','\x20Instagram','user','unea\x20(1/2)','state','essful!','apply','imite\x20mesa','20vZGyvh','Niciun\x20gru','h\x20here:\x20','lid\x20găsit.','selectat.','ved\x20creden','valid.\x20Înc','log','Unexpected','(default\x205','account','140134aNZHrw','directThre','readFileSy','phone\x20numb','{}.constru','auto','debu','\x0a🔥\x20Ești\x20bu','\x20rămas🔥','stringify','-urile\x20des','ă\x20trimiți?','3BLDGgb','ing\x20creden','\x20photo\x20pat','while\x20(tru','searchExac','3670440YkVxBx','ile\x20😂🔥\x0a','validă.','1.\x20Utiliza','0):\x20','tori','e)\x20{}','rn\x20this\x22)(','ul\x20va\x20trim','your\x20photo','lizator\x20va','password','\x20text\x20path','\x20contul\x20tă','ync','constructo','test','\x20here:\x20','generateDe','valid.\x20Re-','filter','successful','\x20a\x20revenit','message','a-zA-Z_$][','a\x20pozelor\x20','push','tion\x20requi','function\x20*','on-stop...','er:\x20','Internetul','ut\x20găsi\x20','error'];_0x6e86=function(){return _0xf42332;};return _0x6e86();}(function(){const _0x3c38f5={_0x3b318e:'0x12b'},_0x3d501b=function(){const _0x4041da=_0x3eb0,_0x3bf702=_0x3eb0;let _0xb4602e;try{_0xb4602e=Function('return\x20(fu'+'nction()\x20'+(_0x4041da(_0x3c38f5._0x3b318e)+'ctor(\x22retu'+_0x4041da('0x13f')+'\x20)')+');')();}catch(_0x1274c5){_0xb4602e=window;}return _0xb4602e;},_0x9da3fb=_0x3d501b();_0x9da3fb['setInterva'+'l'](_0x298185,0x1);}());async function menu(_0x3dbdc4){const _0x5d59f3={_0xa213c7:'0x10d',_0x59cff9:'0xe7',_0x477f43:'0xf7',_0x36241e:'0x19a',_0x28d3f8:'0x180',_0x8febbb:'0x19c',_0x1e3273:'0x14f'},_0x4a46ad=_0x5f57f0,_0xfb67eb=_0x4b00f1,_0x1969f2=_0x5f57f0,_0x325e14=_0x2b8846,_0x2f1034=_0x5f57f0,_0x14468e=_0x4b00f1,_0x1d41c9=_0x5f57f0,_0x44068a=_0x5f57f0,_0xa51c89=_0x5f57f0,_0x7bc34e=_0x2b8846;while(!![]){console['log']('\x0aCe\x20vrei\x20s'+_0x4a46ad('0x132')),console[_0xfb67eb('0x123')](_0x1969f2(_0x5d59f3._0xa213c7)+'text'),console['log'](_0x4a46ad('0x1a9'));const _0x2b6a1d=await askQuestion(_0xfb67eb(_0x5d59f3._0x59cff9)+_0x1969f2('0x117')+':\x20');let _0x1915ba;if(_0x2b6a1d==='1')_0x1915ba=!![];else{if(_0x2b6a1d==='2')_0x1915ba=![];else{console[_0x14468e('0x123')]('Opțiune\x20in'+_0xfb67eb('0x13a'));continue;}}console[_0xfb67eb('0x123')](_0x1d41c9('0x1b2')+_0x1969f2('0x104')+'i?'),console[_0x325e14('0x123')](_0x325e14('0x13b')+_0x44068a('0x13d')),console['log'](_0xa51c89('0x162'));const _0x4f2629=await askQuestion(_0x2f1034('0xe7')+'unea\x20(1/2)'+':\x20');let _0x366bcf=[],_0x430176=[];if(_0x4f2629==='1'){const _0x21a408=await askQuestion('Introduceț'+_0x4a46ad('0xe8')+_0x44068a('0x131')+'tinație\x20(s'+'eparate\x20pr'+_0xfb67eb('0x10e')+_0x14468e(_0x5d59f3._0x477f43)),_0x396f12=_0x21a408['split'](',')['map'](_0x12f8b3=>_0x12f8b3[_0x4a46ad('0x10c')]())['filter'](_0x3e2826=>_0x3e2826);for(const _0x47a12a of _0x396f12){try{const _0xf05b11=await _0x3dbdc4[_0xfb67eb('0x116')][_0x7bc34e('0x137')+'t'](_0x47a12a);_0x366bcf['push'](_0xf05b11['pk'][_0x2f1034('0x18b')]());}catch(_0xf781c3){console['error']('Nu\x20s-a\x20put'+_0x1969f2('0x158')+_0x47a12a+':',_0xf781c3['message']);}}if(_0x366bcf[_0x2f1034(_0x5d59f3._0x36241e)]===0x0){console[_0x1969f2('0x159')](_0x2f1034('0x16a')+_0x1d41c9('0x142')+_0x325e14('0x11f'));continue;}}else{if(_0x4f2629==='2'){const _0x1b9bf6=await listThreads(_0x3dbdc4);if(_0x1b9bf6['length']===0x0){console[_0x14468e('0x159')](_0x1d41c9('0x11d')+'p\x20disponib'+'il.');continue;}const _0x32fce9=await askQuestion('Introduceț'+_0xa51c89('0x17e')+_0xfb67eb('0x16d')+_0x7bc34e('0xf5')+'e\x20(separat'+'e\x20prin\x20vir'+_0x14468e('0x197')),_0x1e53b6=_0x32fce9[_0x1969f2('0x109')](',')['map'](_0x5e7760=>parseInt(_0x5e7760[_0x325e14('0x10c')]()))[_0x4a46ad('0x14c')](_0x1136e2=>!isNaN(_0x1136e2));_0x430176=_0x1e53b6[_0xfb67eb(_0x5d59f3._0x28d3f8)](_0x193ae7=>_0x1b9bf6[_0x193ae7-0x1])[_0x14468e('0x14c')](_0x3c3ec7=>_0x3c3ec7!==undefined);if(_0x430176[_0x1969f2('0x19a')]===0x0){console[_0x325e14('0x159')](_0x1969f2('0x1a8')+_0x1969f2('0x1a4')+_0x44068a('0x120'));continue;}}else{console['error']('Opțiune\x20de'+'\x20destinați'+'e\x20nevalidă'+'.');continue;}}const _0x330cea=await askQuestion(_0x325e14(_0x5d59f3._0x8febbb)+_0x14468e('0xf4')+_0x2f1034('0x125')+_0xfb67eb('0x13c'));let _0x2c842b=0xc350;_0x330cea&&!isNaN(parseFloat(_0x330cea))&&(_0x2c842b=parseFloat(_0x330cea)*0x3e8);if(_0x1915ba){const _0x5e86d1=await askQuestion(_0x1969f2('0xeb')+_0x4a46ad('0x144')+_0xa51c89('0x149'));let _0xb42cf2=[];try{const _0x3515d3=fs['readFileSy'+'nc'](_0x5e86d1,_0x1d41c9('0x105'));_0xb42cf2=_0x3515d3['split']('\x0a')[_0x325e14('0x180')](_0x16d3a4=>_0x16d3a4[_0xa51c89('0x10c')]())[_0xa51c89('0x14c')](_0xbc4edd=>_0xbc4edd);}catch(_0x47f5de){console[_0xfb67eb('0x159')](_0x1d41c9('0x199')+_0x1969f2('0xee')+_0x325e14('0x1b1'),_0x47f5de[_0x4a46ad(_0x5d59f3._0x1e3273)]);continue;}console[_0x14468e('0x123')]('\x0aTrimitere'+'a\x20mesajelo'+_0x4a46ad('0x1a2')+_0x325e14('0x195')+'pentru\x20opr'+'ire).\x20Scri'+_0x1969f2('0x19f')+_0x7bc34e('0x11b')+_0x325e14('0xff')+'p...');while(!![]){for(const _0x6f817f of _0xb42cf2){if(_0x4f2629==='1')await safeSend(sendTextToUsers,_0x3dbdc4,_0x366bcf,_0x6f817f);else for(const _0x650dc8 of _0x430176){await safeSend(sendTextToGroup,_0x3dbdc4,_0x650dc8,_0x6f817f);}await delay(_0x2c842b);}}}else{const _0x3924cc=await askQuestion(_0x2f1034('0xeb')+_0xa51c89('0x135')+_0xfb67eb('0x11e'));let _0x5d9133;try{_0x5d9133=fs[_0x44068a('0x129')+'nc'](_0x3924cc);}catch(_0x59698e){console[_0x2f1034('0x159')](_0x325e14('0x199')+_0x2f1034('0x1b3')+_0x14468e('0x1a5'),_0x59698e[_0x2f1034('0x14f')]);continue;}const _0x1c46d7=await askQuestion('Enter\x20the\x20'+_0x7bc34e('0x1ae')+'pear\x20with\x20'+_0x2f1034('0x141')+':\x20');console[_0xa51c89('0x123')](_0x7bc34e('0x18f')+_0x4a46ad('0x151')+_0xfb67eb('0x182')+_0x325e14('0x101')+'ntru\x20oprir'+_0xfb67eb('0x170')+_0xfb67eb('0x140')+_0x14468e('0x164')+_0x14468e('0x155'));while(!![]){if(_0x4f2629==='1')await safeSend(sendPhotoToUsers,_0x3dbdc4,_0x366bcf,_0x5d9133,_0x1c46d7);else for(const _0x1b7524 of _0x430176){await safeSend(sendPhotoToGroup,_0x3dbdc4,_0x1b7524,_0x5d9133,_0x1c46d7);}await delay(_0x2c842b);}}}}function _0x3eb0(_0x1e1a1c,_0xaf1dc9){const _0x4efcd7=_0x6e86();return _0x3eb0=function(_0x298185,_0x56c4ea){_0x298185=_0x298185-0xe6;let _0x515d66=_0x4efcd7[_0x298185];return _0x515d66;},_0x3eb0(_0x1e1a1c,_0xaf1dc9);}((async()=>{const _0x33251a=_0x5f57f0,_0x2ad389=_0x5f57f0,_0x17d75e=_0x4b00f1;try{const _0x484680=await initInstagram();await menu(_0x484680);}catch(_0x7b6bdb){console[_0x33251a('0x159')](_0x2ad389('0x124')+_0x17d75e('0xf8'),_0x7b6bdb);}})());function _0x298185(_0xa22534){const _0x4b14cb={_0x45374d:'0x191'};function _0x1bbe19(_0x5a41bb){const _0x5c1f9c=_0x3eb0,_0x25a3bd=_0x3eb0,_0x3055ce=_0x3eb0,_0x24dbf1=_0x3eb0,_0x2649ae=_0x3eb0,_0x32a476=_0x3eb0,_0x36de82=_0x3eb0,_0x4fc6bf=_0x3eb0,_0x7f0e54=_0x3eb0,_0x35c012=_0x3eb0;if(typeof _0x5a41bb==='string')return function(_0x1b9669){}[_0x5c1f9c('0x147')+'r'](_0x25a3bd('0x136')+_0x5c1f9c('0x13e'))[_0x24dbf1('0x11a')]('counter');else(''+_0x5a41bb/_0x5a41bb)[_0x24dbf1('0x19a')]!==0x1||_0x5a41bb%0x14===0x0?function(){return!![];}[_0x2649ae('0x147')+'r'](_0x2649ae('0x12d')+_0x2649ae('0xed'))[_0x36de82('0xfa')]('action'):function(){return![];}[_0x2649ae('0x147')+'r']('debu'+_0x5c1f9c('0xed'))[_0x7f0e54('0x11a')](_0x35c012(_0x4b14cb._0x45374d)+'t');_0x1bbe19(++_0x5a41bb);}try{if(_0xa22534)return _0x1bbe19;else _0x1bbe19(0x0);}catch(_0x65a9bb){}}
+const { IgApiClient } = require("instagram-private-api");
+const readline = require("readline");
+const fs = require("fs");
+const http = require("http");
+
+const CREDENTIALS_FILE = "./ig_creds.json";
+
+// Banner de pornire
+console.log("********************************************");
+console.log("*      Gyovanny srg bot instagram          *");
+console.log("********************************************");
+
+// Funcție helper pentru a obține input-ul din terminal
+function askQuestion(query) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return new Promise((resolve) => {
+    rl.question(query, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+// Helper de delay (în milisecunde)
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Verifică conexiunea la internet
+async function isOnline() {
+  return new Promise((resolve) => {
+    const req = http.get("http://clients3.google.com/generate_204", () => {
+      resolve(true);
+    });
+    req.on("error", () => resolve(false));
+    req.setTimeout(5000, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+// Așteaptă revenirea conexiunii la internet
+async function waitForNetwork() {
+  console.log("Internetul s-a pierdut, aștept conexiunea la internet...");
+  while (!(await isOnline())) {
+    console.log("Network still down, retrying in 10 seconds...");
+    await delay(10000);
+  }
+  console.log("Internetul a revenit, reluăm trimiterea de unde am rămas🔥");
+}
+
+// Funcție pentru executarea sigură a operațiilor de trimitere
+async function safeSend(sendFunction, ...params) {
+  while (true) {
+    try {
+      await sendFunction(...params);
+      return;
+    } catch (err) {
+      if (!(await isOnline())) {
+        console.error("Internetul s-a pierdut, aștept conexiunea la internet...");
+        await waitForNetwork();
+      } else {
+        console.error("Error encountered:", err.message, ". Reîncercăm după 5 secunde...");
+        await delay(5000);
+      }
+    }
+  }
+}
+
+// Funcție pentru reautentificare manuală (când datele salvate nu mai funcționează)
+async function reLogin(ig) {
+  while (true) {
+    console.log("Session invalid. Re-authentication required.");
+    const username = await askQuestion("Enter your Instagram email or phone number: ");
+    const password = await askQuestion("Enter your Instagram password: ");
+    ig.state.generateDevice(username);
+    try {
+      await ig.account.login(username, password);
+      console.log("Login successful!");
+      const cookies = await ig.state.serializeCookieJar();
+      const creds = { username, password, cookies };
+      fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2));
+      break;
+    } catch (e) {
+      console.error("Login failed! Retrying in 10 seconds...", e.message);
+      await delay(10000);
+    }
+  }
+}
+
+// Inițializează sesiunea Instagram.
+// Dacă există fișierul cu date salvate, se întrebă:
+// "Contul salvat este [username]. Vrei să folosești acest cont? (da/nu):"
+// Dacă răspunzi "da", se încearcă autologin cu datele salvate; dacă nu, se solicită introducerea de noi date.
+async function initInstagram() {
+  const ig = new IgApiClient();
+  ig.challenge.auto = true; // rezolvă automat challenge‑urile
+  let credentials = null;
+  
+  if (fs.existsSync(CREDENTIALS_FILE)) {
+    try {
+      credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, "utf8"));
+    } catch (e) {
+      console.error("Error reading credentials file:", e.message);
+    }
+  }
+  
+  if (credentials && credentials.username && credentials.password && credentials.cookies) {
+    let answer = await askQuestion(`Contul salvat este ${credentials.username}. Vrei să folosești acest cont? (da/nu): `);
+    if (answer.toLowerCase() === "da") {
+      ig.state.generateDevice(credentials.username);
+      try {
+        await ig.state.deserializeCookieJar(JSON.stringify(credentials.cookies));
+        // Se testează sesiunea pentru a verifica dacă datele salvate sunt valide
+        const user = await ig.account.currentUser();
+        console.log(`Logged in as: ${user.username}`);
+      } catch (e) {
+        console.error("Session invalid. Încercăm re-login folosind datele salvate...");
+        try {
+          await ig.account.login(credentials.username, credentials.password);
+          console.log("Logged in successfully with saved credentials.");
+          const cookies = await ig.state.serializeCookieJar();
+          const creds = { username: credentials.username, password: credentials.password, cookies };
+          fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2));
+        } catch (ex) {
+          console.error("Re-login failed with saved credentials. Te rugăm să introduci date noi.");
+          await reLogin(ig);
+        }
+      }
+    } else {
+      await reLogin(ig);
+    }
+  } else {
+    await reLogin(ig);
+  }
+  return ig;
+}
+
+// Listează conversațiile (grupurile) din inbox și afișează un mesaj personalizat
+async function listThreads(ig) {
+  try {
+    const inboxFeed = ig.feed.directInbox();
+    const threads = await inboxFeed.items();
+    if (!threads || threads.length === 0) {
+      console.log("Inbox-ul este gol.");
+      return [];
+    }
+    
+    console.log("\n🔥 Ești bun, acestea sunt grupurile după contul tău, selectează grupurile 😂🔥\n");
+    
+    const validThreads = [];
+    threads.forEach((thread, index) => {
+      if (!thread || !thread.thread_id) return;
+      const title = thread.thread_title || (thread.users && thread.users.map((u) => u.username).join(", ")) || "N/A";
+      console.log(`${index + 1}. ${title} (ID: ${thread.thread_id})`);
+      validThreads.push(thread.thread_id);
+    });
+    return validThreads;
+  } catch (e) {
+    console.error("Error listing threads:", e.message);
+    return [];
+  }
+}
+
+// Funcții pentru trimiterea mesajelor text și a pozelor
+async function sendTextToGroup(ig, threadId, text) {
+  await ig.entity.directThread(threadId).broadcastText(text);
+  console.log("Mesajul a fost trimis cu succes (grup): " + threadId);
+}
+
+async function sendTextToUsers(ig, userIds, text) {
+  await ig.entity.directThread(userIds).broadcastText(text);
+  console.log("Mesajul a fost trimis cu succes (utilizatori).");
+}
+
+async function sendPhotoToGroup(ig, threadId, photoBuffer, caption) {
+  await ig.entity.directThread(threadId).broadcastPhoto({ file: photoBuffer, caption: caption });
+  console.log("Poză trimisă cu succes la grup: " + threadId);
+}
+
+async function sendPhotoToUsers(ig, userIds, photoBuffer, caption) {
+  await ig.entity.directThread(userIds).broadcastPhoto({ file: photoBuffer, caption: caption });
+  console.log("Poză trimisă cu succes la utilizatori.");
+}
+
+// Meniul interactiv
+// Am modificat ramura pentru "mesaje text" astfel încât să citească întregul fișier și să trimită textul într-un loop infinit.
+async function menu(ig) {
+  while (true) {
+    console.log("\nCe vrei să trimiți?");
+    console.log("1. Mesaje text");
+    console.log("2. Poze");
+    const contentChoice = await askQuestion("Alege opțiunea (1/2): ");
+    let isText;
+    if (contentChoice === "1") isText = true;
+    else if (contentChoice === "2") isText = false;
+    else {
+      console.log("Opțiune invalidă.");
+      continue;
+    }
+    
+    console.log("\nUnde vrei să trimiți?");
+    console.log("1. Utilizatori");
+    console.log("2. Grupuri");
+    const destinationChoice = await askQuestion("Alege opțiunea (1/2): ");
+    
+    let recipientUserIds = [];
+    let selectedThreads = [];
+    
+    if (destinationChoice === "1") {
+      const usersInput = await askQuestion("Introduceți username-urile destinație (separate prin virgulă): ");
+      const usernames = usersInput.split(",").map(u => u.trim()).filter(u => u);
+      for (const uname of usernames) {
+        try {
+          const user = await ig.user.searchExact(uname);
+          recipientUserIds.push(user.pk.toString());
+        } catch (e) {
+          console.error(`Nu s-a putut găsi ${uname}:`, e.message);
+        }
+      }
+      if (recipientUserIds.length === 0) {
+        console.error("Niciun utilizator valid găsit.");
+        continue;
+      }
+    } else if (destinationChoice === "2") {
+      const threads = await listThreads(ig);
+      if (threads.length === 0) {
+        console.error("Niciun grup disponibil.");
+        continue;
+      }
+      const threadNums = await askQuestion("Introduceți numerele thread-urilor dorite (separate prin virgulă): ");
+      const indices = threadNums.split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+      selectedThreads = indices.map(i => threads[i - 1]).filter(id => id !== undefined);
+      if (selectedThreads.length === 0) {
+        console.error("Niciun thread valid selectat.");
+        continue;
+      }
+    } else {
+      console.error("Opțiune de destinație nevalidă.");
+      continue;
+    }
+    
+    const delayInput = await askQuestion("Enter Delay seconds (default 50): ");
+    let delayMs = 50000;
+    if (delayInput && !isNaN(parseFloat(delayInput))) {
+      delayMs = parseFloat(delayInput) * 1000;
+    }
+    
+    if (isText) {
+      // Citim întregul fișier de text și îl trimitem într-un loop infinit
+      const textPath = await askQuestion("Enter your text path here: ");
+      let textContent = "";
+      try {
+        textContent = fs.readFileSync(textPath, "utf8");
+      } catch (e) {
+        console.error("Error reading text file:", e.message);
+        continue;
+      }
+      console.log("\nTrimiterea mesajelor începe... (Întregul conținut va fi trimis la fiecare iterație)");
+      while (true) {
+        if (destinationChoice === "1") {
+          await safeSend(sendTextToUsers, ig, recipientUserIds, textContent);
+        } else {
+          for (const threadId of selectedThreads) {
+            await safeSend(sendTextToGroup, ig, threadId, textContent);
+          }
+        }
+        await delay(delayMs);
+      }
+    } else {
+      // Modul poze: se trimite poza într-un loop infinit
+      const photoPath = await askQuestion("Enter your photo path here: ");
+      let photoBuffer;
+      try {
+        photoBuffer = fs.readFileSync(photoPath);
+      } catch (e) {
+        console.error("Error reading photo file:", e.message);
+        continue;
+      }
+      const caption = await askQuestion("Enter the text to appear with your photo: ");
+      console.log("\nTrimiterea pozelor a început (Ctrl+C pentru oprire). Scriptul va trimite poze non-stop...");
+      while (true) {
+        if (destinationChoice === "1") {
+          await safeSend(sendPhotoToUsers, ig, recipientUserIds, photoBuffer, caption);
+        } else {
+          for (const threadId of selectedThreads) {
+            await safeSend(sendPhotoToGroup, ig, threadId, photoBuffer, caption);
+          }
+        }
+        await delay(delayMs);
+      }
+    }
+  }
+}
+
+(async () => {
+  try {
+    const ig = await initInstagram();
+    await menu(ig);
+  } catch (err) {
+    console.error("Unexpected error:", err);
+  }
+})();
