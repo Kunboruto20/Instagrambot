@@ -14,5 +14,6 @@ cd Instagrambot
 # Instalare pachete Node.js
 npm install
 
+npm install chalk
 # Pornire automată a botului
 npm start
