@@ -2,9 +2,9 @@
   "name": "instagram-bot-boruto",
   "version": "1.0.0",
   "description": "Bot Instagram CLI pentru mesaje și poze automate",
-  "main": "index.js",
+  "main": "index.mjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.mjs"
   },
   "dependencies": {
     "instagram-private-api": "*",
