@@ -212,8 +212,8 @@ async function main() {
         const thread = ig.entity.directThread([userId.toString()]);
         await thread.broadcastText(message);
       } else {
-        // Pentru grupuri target e deja thread_id
-        const thread = ig.entity.directThread([target]);
+        // Pentru grupuri: folosim direct threadId, nu array
+        const thread = ig.entity.directThread(target);
         await thread.broadcastText(message);
       }
       console.log(`✅ Mesaj trimis către ${target}: ${message}`);
