@@ -9,6 +9,6 @@ pkg install git
 pkg install -y nodejs git
 
 npm install inquirer
-npm install instagram-private-api 
+npm install gvny-nodeinsta-gram
 npm install 
 npm start 
