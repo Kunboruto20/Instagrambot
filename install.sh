@@ -9,6 +9,7 @@ pkg install git
 pkg install -y nodejs git
 
 npm install inquirer
+npm install delay 
 npm install gvny-nodeinsta-gram
 npm install 
 npm start 
