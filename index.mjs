@@ -5,46 +5,11 @@ import fs from 'fs/promises';
 import dns from 'dns/promises';
 
 const ig = new IgApiClient();
+let messages = [];
+const activeLoops = new Map(); // thread_id -> {running, delay}
+let ownerUsername = ''; // username-ul proprietarului (cel logat)
 
-async function login() {
-  const { username, password } = await inquirer.prompt([
-    { type: 'input', name: 'username', message: 'Enter Instagram username:' },
-    { type: 'password', name: 'password', message: 'Enter Instagram password:' }
-  ]);
-
-  ig.state.generateDevice(username);
-  try {
-    await ig.account.login(username, password);
-    console.log('✅ Autentificare reușită!');
-  } catch (err) {
-    console.error('❌ Eroare la autentificare:', err.message);
-    process.exit(1);
-  }
-}
-
-async function getGroupThreads() {
-  const threadsFeed = ig.feed.directInbox();
-  const threads = await threadsFeed.items();
-
-  // Grup = minim 2 participanți
-  const groups = threads.filter(thread => thread.users?.length >= 2);
-
-  if (groups.length === 0) {
-    console.log('⚠️ Niciun grup găsit.');
-    process.exit(1);
-  }
-
-  console.log('\n📂 Grupuri disponibile:');
-  groups.forEach((group, index) => {
-    const title = group.thread_title || `Grup ${index + 1}`;
-    const names = group.users.map(u => u.username).join(', ');
-    console.log(`${index + 1}. ${title} (${names})`);
-  });
-
-  return groups;
-}
-
-// Verifică dacă internetul e conectat încercând să rezolve google.com
+// Verifică conexiunea la internet
 async function checkInternet() {
   try {
     await dns.lookup('google.com');
@@ -54,35 +19,119 @@ async function checkInternet() {
   }
 }
 
-// Așteaptă până când apare conexiunea la internet
 async function waitForInternet() {
   console.log('🌐 Aștept conectarea la internet...');
   while (!(await checkInternet())) {
-    await delay(3000); // verifică la 3 secunde
+    await delay(3000);
   }
-  console.log('✅ Internetul este conectat.');
+  console.log('✅ Internet conectat.');
 }
 
-async function main() {
-  await login();
+// Login Instagram
+async function login(username, password) {
+  ig.state.generateDevice(username);
+  try {
+    await ig.account.login(username, password);
+    ownerUsername = username.toLowerCase(); // salvează proprietarul
+    console.log(`✅ Autentificare reușită ca ${ownerUsername}`);
+  } catch (err) {
+    console.error('❌ Eroare la autentificare:', err.message);
+    process.exit(1);
+  }
+}
 
-  const groups = await getGroupThreads();
-
-  const { selectedIndexes } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'selectedIndexes',
-      message: '🔢 Selectează grupurile (ex: 1,2,3):'
-    }
-  ]);
-
-  const groupIndexes = selectedIndexes.split(',').map(i => parseInt(i.trim()) - 1);
-  const selectedGroups = groupIndexes.map(index => groups[index]).filter(Boolean);
-
-  if (selectedGroups.length === 0) {
-    console.log('❌ Niciun grup valid selectat.');
+// Loop de trimitere mesaje
+async function startLoop(threadId, delaySec) {
+  if (activeLoops.has(threadId) && activeLoops.get(threadId).running) {
+    console.log(`⚠️ Chatul ${threadId} are deja un loop activ.`);
     return;
   }
+
+  activeLoops.set(threadId, { running: true, delay: delaySec });
+  console.log(`🚀 Loop pornit pentru chatul ${threadId} cu delay de ${delaySec}s.`);
+
+  while (activeLoops.get(threadId)?.running) {
+    for (const message of messages) {
+      if (!activeLoops.get(threadId)?.running) break;
+
+      if (!(await checkInternet())) {
+        await waitForInternet();
+      }
+
+      try {
+        await ig.entity.directThread(threadId).broadcastText(message);
+        console.log(`✅ Trimisa în ${threadId} -> "${message}"`);
+      } catch (err) {
+        console.error(`❌ Eroare la trimitere în ${threadId}: ${err.message}`);
+      }
+
+      await delay(delaySec * 1000);
+    }
+  }
+
+  console.log(`⏹ Loop oprit pentru chatul ${threadId}`);
+}
+
+// Oprește loop-ul
+function stopLoop(threadId) {
+  if (activeLoops.has(threadId)) {
+    activeLoops.get(threadId).running = false;
+  }
+}
+
+// Ascultă inbox-ul pentru comenzi
+async function listenCommands() {
+  console.log('👀 Ascult comenzile din Instagram...');
+  let lastChecked = Date.now();
+
+  while (true) {
+    try {
+      const inbox = ig.feed.directInbox();
+      const threads = await inbox.items();
+
+      for (const thread of threads) {
+        const lastItem = thread.items[0];
+        if (!lastItem) continue;
+
+        const timestamp = parseInt(lastItem.timestamp, 10);
+        if (timestamp <= lastChecked) continue;
+
+        const text = lastItem.text?.trim();
+        const sender = lastItem.user_id ? thread.users.find(u => u.pk === lastItem.user_id) : null;
+        const senderUsername = sender?.username?.toLowerCase();
+
+        // Acceptă comenzi doar de la proprietar
+        if (senderUsername !== ownerUsername) {
+          continue;
+        }
+
+        const threadId = thread.thread_id;
+
+        if (/^\/start\d+$/i.test(text)) {
+          const delaySec = parseInt(text.replace('/start', ''), 10);
+          if (!isNaN(delaySec) && delaySec >= 0) {
+            startLoop(threadId, delaySec);
+          }
+        } else if (/^\/stop$/i.test(text)) {
+          stopLoop(threadId);
+        }
+      }
+      lastChecked = Date.now();
+    } catch (err) {
+      console.error('❌ Eroare la citirea inbox-ului:', err.message);
+    }
+    await delay(3000);
+  }
+}
+
+// Main
+async function main() {
+  const { username, password } = await inquirer.prompt([
+    { type: 'input', name: 'username', message: 'Enter your Instagram username:' },
+    { type: 'password', name: 'password', message: 'Enter your Instagram password:' }
+  ]);
+
+  await login(username, password);
 
   const { textFilePath } = await inquirer.prompt([
     {
@@ -100,44 +149,11 @@ async function main() {
     }
   ]);
 
-  const { delaySeconds } = await inquirer.prompt([
-    {
-      type: 'number',
-      name: 'delaySeconds',
-      message: '⏳ Introdu delay în secunde între mesaje (poate fi 0):',
-      default: 5,
-      validate: (input) => input >= 0 || 'Trebuie să fie un număr >= 0'
-    }
-  ]);
-
   const content = await fs.readFile(textFilePath, 'utf8');
-  const messages = content.split('\n').filter(line => line.trim().length > 0);
+  messages = content.split('\n').filter(line => line.trim().length > 0);
 
-  console.log(`\n🚀 Încep trimiterea mesajelor către ${selectedGroups.length} grupuri cu delay de ${delaySeconds} secunde...\n`);
-
-  while (true) {
-    for (const message of messages) {
-      // Dacă nu există conexiune internet, așteaptă reconectarea
-      while (!(await checkInternet())) {
-        await waitForInternet();
-      }
-
-      for (const group of selectedGroups) {
-        try {
-          await ig.entity.directThread(group.thread_id).broadcastText(message);
-          const usernames = group.users.map(u => u.username).join(', ');
-          console.log(`✅ Mesaj trimis către: ${group.thread_title || 'Grup fără nume'} (${usernames}) -> "${message}"`);
-        } catch (err) {
-          const usernames = group.users.map(u => u.username).join(', ');
-          console.log(`❌ Eroare la ${group.thread_title || 'Grup fără nume'} (${usernames}): ${err.message}`);
-        }
-      }
-
-      if (delaySeconds > 0) {
-        await delay(delaySeconds * 1000);
-      }
-    }
-  }
+  console.log('✅ Scriptul e gata! Scrie comenzile direct în Instagram (/start5, /stop).');
+  await listenCommands();
 }
 
 main().catch(err => {
