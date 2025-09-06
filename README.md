@@ -5,7 +5,7 @@ Acest bot permite trimiterea automată de mesaje către utilizatori sau grupuri 
 ## Instalare rapidă în Termux
 
 ```bash
-git clone https://github.com/gyovannyvpn123/Instagrambot.git
+git clone https://github.com/Kunboruto20/Instagrambot.git
 cd Instagrambot
 chmod +x install.sh
 ./install.sh
