@@ -13,7 +13,7 @@ cd Instagrambot
 
 # Instalare pachete Node.js
 npm init -y
-npm install instagram-private-api readline-sync
+npm install nodejs-insta-private-api readline-sync
 
 npm install chalk
 # Pornire automată a botului
