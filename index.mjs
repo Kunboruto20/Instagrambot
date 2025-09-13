@@ -1,111 +1,240 @@
-// instagram_spam.js
-//
-// Script de spam DM în grupuri Instagram folosind instagram-private-api
-// Blocat rate-limit 429 prin retry infinit imediat
+// group_spam_loop.js
+// Requires: nodejs-insta-private-api, readline-sync, chalk
+// Usage: node group_spam_loop.js
 
-import { IgApiClient } from 'instagram-private-api';
-import readlineSync from 'readline-sync';
-import fs from 'fs';
+const fs = require('fs');
+const path = require('path');
+const readline = require('readline-sync');
+const chalk = require('chalk');
 
-;(async () => {
-  // 1. Prompt credențiale
-  const username = readlineSync.question('Enter your Instagram username: ');
-  const password = readlineSync.question('Enter your Instagram password: ', { hideEchoBack: true });
+const { IgApiClient } = require('nodejs-insta-private-api');
+const Utils = require('nodejs-insta-private-api/src/utils');
 
-  // 2. Init și generare device fingerprint
-  const ig = new IgApiClient();
-  ig.state.generateDevice(username);
+const SESSION_FILE = path.resolve(process.cwd(), 'session.json');
 
-  // 3. Monkey-patch pentru IGNORAREA RATE LIMIT (429)
-  const originalRequest = ig.client.request.bind(ig.client);
-  ig.client.request = async (config) => {
-    // retry infinit la 429
-    while (true) {
-      try {
-        return await originalRequest(config);
-      } catch (err) {
-        if (err.response?.status === 429) {
-          // logăm și retry imediat
-          console.warn('⚠️ 429 Rate limit detected. Retrying immediately...');
-          continue;
-        }
-        throw err;
-      }
-    }
-  };
+// ===== Banner =====
+console.log(chalk.bold.red("\n=========================================="));
+console.log(chalk.bold.red("NUROFEN FORTE INSTAGRAM SCRIPT 🔥"));
+console.log(chalk.bold.red("==========================================\n"));
 
-  // 4. Login
+// ===== Override console.log/warn/error to always show red =====
+const originalLog = console.log;
+console.log = (...args) => originalLog(chalk.red(args.join(' ')));
+const originalWarn = console.warn;
+console.warn = (...args) => originalWarn(chalk.red(args.join(' ')));
+const originalError = console.error;
+console.error = (...args) => originalError(chalk.red(args.join(' ')));
+
+async function promptCredentials() {
+  const username = readline.question(chalk.red('Enter your Instagram username: '));
+  const password = readline.question(chalk.red('Enter your Instagram password: '), { hideEchoBack: true });
+  return { username, password };
+}
+
+async function saveSessionSafe(ig) {
   try {
-    await ig.account.login(username, password);
-    console.log('\n✅ Logged in successfully!\n');
+    const session = await ig.saveSession();
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
+    console.log('🔐 Session saved to', SESSION_FILE);
+  } catch (e) {
+    console.warn('⚠️ Could not save session:', e.message || e);
+  }
+}
+
+async function loadSessionIfExists(ig) {
+  if (!fs.existsSync(SESSION_FILE)) return false;
+  try {
+    const raw = fs.readFileSync(SESSION_FILE, 'utf8');
+    const session = JSON.parse(raw);
+    await ig.loadSession(session);
+    if (await ig.isSessionValid()) {
+      console.log('✅ Loaded existing session (valid).');
+      return true;
+    } else {
+      console.log('⚠️ Saved session is not valid.');
+      return false;
+    }
+  } catch (e) {
+    console.warn('⚠️ Failed to load session:', e.message || e);
+    return false;
+  }
+}
+
+async function doLogin(ig, username, password) {
+  try {
+    await ig.login({ username, password });
+    console.log('✅ Logged in successfully!');
+    await saveSessionSafe(ig);
+    return true;
   } catch (err) {
-    console.error('\n❌ Login failed:', err.response?.data || err.message);
+    // Handle 2FA
+    if (err && err.name === 'IgLoginTwoFactorRequiredError') {
+      console.log('🔐 Two-factor authentication required.');
+      const twoFactorIdentifier = err.response && err.response.data && err.response.data.two_factor_info && err.response.data.two_factor_info.two_factor_identifier;
+      const code = readline.question(chalk.red('Enter 2FA code: '));
+      try {
+        await ig.account.twoFactorLogin({
+          username,
+          verificationCode: code,
+          twoFactorIdentifier
+        });
+        console.log('✅ 2FA login successful!');
+        await saveSessionSafe(ig);
+        return true;
+      } catch (twoErr) {
+        console.error('❌ 2FA login failed:', twoErr.message || twoErr);
+        return false;
+      }
+    } else {
+      console.error('❌ Login error:', err.name ? `${err.name}: ${err.message}` : err);
+      return false;
+    }
+  }
+}
+
+function chooseGroupsFromList(groups) {
+  console.log('\n📋 Grupuri găsite:');
+  groups.forEach((g, i) => {
+    const title = g.thread_title || (g.users && g.users.map(u => u.username).join(', ')) || g.thread_id;
+    console.log(`${i + 1}. ${title} (id: ${g.thread_id})`);
+  });
+  const selection = readline.question(chalk.red('\nSelectează grupurile (ex: 1,2,3): '));
+  const indices = selection.split(',')
+    .map(s => parseInt(s.trim(), 10) - 1)
+    .filter(n => !isNaN(n) && n >= 0 && n < groups.length);
+  const chosen = Array.from(new Set(indices)).map(i => groups[i]).filter(Boolean);
+  return chosen;
+}
+
+function loadMessagesFromFile(filePath) {
+  if (!fs.existsSync(filePath)) throw new Error('File not found');
+  const txt = fs.readFileSync(filePath, 'utf8');
+  const lines = txt.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  if (lines.length === 0) throw new Error('No messages in file');
+  return { lines, fullText: txt };
+}
+
+async function main() {
+  console.log('=== Instagram Group Sender (uses nodejs-insta-private-api) ===\n');
+
+  const ig = new IgApiClient();
+
+  // Try load session or login
+  let loggedIn = await loadSessionIfExists(ig);
+  if (!loggedIn) {
+    const { username, password } = await promptCredentials();
+    loggedIn = await doLogin(ig, username, password);
+    if (!loggedIn) {
+      console.error('❌ Could not login. Exiting.');
+      process.exit(1);
+    }
+  }
+
+  // Alegere mod trimitere
+  console.log('\nCum vrei ca botul să trimită mesajele?');
+  console.log('1. Linie cu linie');
+  console.log('2. Text întreg');
+  const sendMode = readline.question(chalk.red('Selectează (1 sau 2): ')).trim();
+
+  // Fetch inbox and threads
+  console.log('\n🔎 Fetching inbox threads...');
+  let inbox;
+  try {
+    inbox = await ig.dm.getInbox();
+  } catch (e) {
+    console.error('❌ Failed to fetch inbox:', e.message || e);
     process.exit(1);
   }
 
-  // 5. Obținere toate thread-urile de grup (mai mulți membri)
-  const threadsFeed = ig.feed.directInbox();
-  const threads = await threadsFeed.items();
-  const groupThreads = threads.filter(t => Array.isArray(t.users) && t.users.length > 1);
-
-  if (groupThreads.length === 0) {
-    console.log('No group chats found.');
-    process.exit(0);
-  }
-
-  // 6. Afișare grupuri
-  console.log('Available group chats:');
-  groupThreads.forEach((thread, idx) => {
-    const names = thread.users.map(u => u.username).join(', ');
-    console.log(`${idx + 1}. ${names}`);
+  const threads = (inbox && (inbox.inbox && inbox.inbox.threads)) || (inbox && inbox.threads) || [];
+  const groups = threads.filter(t => {
+    const usersCount = (t.users && t.users.length) || (t.thread && t.thread.users && t.thread.users.length) || 0;
+    return usersCount > 2 || Boolean(t.thread_title);
   });
 
-  // 7. Selectare grupuri
-  const selected = readlineSync.question('\nSelect group numbers (e.g. 1,2,3): ');
-  const selectedIndexes = selected
-    .split(',')
-    .map(i => parseInt(i.trim(), 10) - 1)
-    .filter(i => i >= 0 && i < groupThreads.length);
-  const selectedThreads = selectedIndexes.map(i => groupThreads[i]);
-
-  if (selectedThreads.length === 0) {
-    console.log('❌ No valid group threads selected.');
+  if (!groups.length) {
+    console.log('❌ Nu s-au găsit grupuri (thread-uri de tip group).');
     process.exit(0);
   }
 
-  // 8. Încărcare fișier text
-  const textPath = readlineSync.question('\nEnter your text file path: ');
-  if (!fs.existsSync(textPath)) {
-    console.error('Text file not found.');
+  const chosenGroups = chooseGroupsFromList(groups);
+  if (!chosenGroups.length) {
+    console.log('❌ Niciun grup selectat valid. Exiting.');
+    process.exit(0);
+  }
+
+  const filePath = readline.question(chalk.red('Enter path to your text file with messages (one per line): ')).trim();
+  let messages;
+  try {
+    messages = loadMessagesFromFile(filePath);
+  } catch (e) {
+    console.error('❌', e.message || e);
     process.exit(1);
   }
-  const raw = fs.readFileSync(textPath, 'utf-8');
-  const messages = raw.split(/\r?\n/).filter(Boolean);
-  if (messages.length === 0) {
-    console.log('No messages found in file.');
-    process.exit(0);
-  }
 
-  // 9. Prompt delay
-  const delaySec = parseInt(readlineSync.question('Enter delay in seconds: '), 10) || 0;
+  const delaySecInput = readline.question(chalk.red('Enter delay seconds between sends (per-message base, can be fractional): ')).trim();
+  let baseDelay = parseFloat(delaySecInput);
+  if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
+  console.log(`\n▶️ Will send messages in a loop with base delay ${baseDelay}s (uses jitter). Press CTRL+C to stop.\n`);
 
-  console.log('\n🚀 Starting spam loop...\n');
+  let running = true;
+  process.on('SIGINT', () => {
+    console.log('\n⏹️ Interrupted by user. Exiting gracefully...');
+    running = false;
+  });
 
-  // 10. Loop infinit
-  let index = 0;
-  while (true) {
-    const message = messages[index % messages.length];
-    for (const thread of selectedThreads) {
-      try {
-        await ig.entity.directThread(thread.thread_id).broadcastText(message);
-        const names = thread.users.map(u => u.username).join(', ');
-        console.log(`✅ Sent to ${names}: ${message}`);
-      } catch (err) {
-        console.log(`❌ Failed to send to ${thread.thread_id}: ${err.message}`);
-      }
+  let msgIndex = 0;
+  let totalSent = 0;
+  while (running) {
+    let toSend;
+    if (sendMode === '2') {
+      // Trimite tot fișierul
+      toSend = messages.fullText;
+    } else {
+      // Linie cu linie
+      toSend = messages.lines[msgIndex % messages.lines.length];
+      msgIndex++;
     }
-    index++;
-    // Delay între cicluri
-    await new Promise(res => setTimeout(res, delaySec * 1000));
+
+    for (const g of chosenGroups) {
+      if (!running) break;
+      const threadId = g.thread_id || (g.thread && g.thread.thread_id);
+      if (!threadId) {
+        console.warn('⚠️ Skipping group without thread_id:', g);
+        continue;
+      }
+
+      try {
+        await Utils.retryOperation(async () => {
+          await ig.dm.sendToGroup({ threadId, message: toSend });
+        }, 3, 1500);
+
+        totalSent++;
+        const now = new Date();
+        const currentTime = now.toLocaleTimeString();
+        const currentDate = now.toLocaleDateString();
+
+        console.log(
+          `[${currentTime}] ✅ Sent to group ${threadId}: "${toSend}" (total sent: ${totalSent})\n` +
+          `Autor: Gyovanny VP\nOra: ${currentTime}\nData: ${currentDate}\n`
+        );
+      } catch (sendErr) {
+        console.error(`[${new Date().toLocaleTimeString()}] ❌ Failed to send to ${threadId}:`, sendErr.message || sendErr);
+      }
+
+      const min = Math.max(200, baseDelay * 1000 - 500);
+      const max = baseDelay * 1000 + 1500;
+      await Utils.randomDelay(min, max);
+    }
+
+    await Utils.randomDelay(500, 1200);
   }
-})();
+
+  try { await ig.destroy && ig.destroy(); } catch (_) {}
+  process.exit(0);
+}
+
+main().catch(err => {
+  console.error('Fatal error:', err && err.message ? err.message : err);
+  process.exit(1);
+});
