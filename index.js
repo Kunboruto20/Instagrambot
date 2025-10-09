@@ -14,7 +14,7 @@ const SESSION_FILE = path.resolve(process.cwd(), 'session.json');
 
 // ===== Banner =====
 console.log(chalk.bold.red("\n=========================================="));
-console.log(chalk.bold.red("NUROFEN FORTE INSTAGRAM SCRIPT 🔥"));
+console.log(chalk.bold.red("GYOVANNY INSTAGRAM SPAM BOT 🔥"));
 console.log(chalk.bold.red("==========================================\n"));
 
 // ===== Override console.log/warn/error to always show red =====
