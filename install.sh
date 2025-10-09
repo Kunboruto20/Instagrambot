@@ -7,9 +7,6 @@ pkg upgrade -y
 # Instalare dependențe necesare
 pkg install -y nodejs git
 
-# Clonare repository
-git clone https://github.com/Kunboruto20/Instagrambot.git
-cd Instagrambot
 
 # Instalare pachete Node.js
 npm init -y
