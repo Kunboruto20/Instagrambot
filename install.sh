@@ -10,7 +10,7 @@ pkg install -y nodejs git
 
 # Instalare pachete Node.js
 npm init -y
-npm install nodejs-insta-private-api readline-sync
+npm install nodejs-insta-private-api readline-sync@latest
 
 npm install chalk npm uninstall chalk
 npm install chalk@4
