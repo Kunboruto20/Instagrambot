@@ -7,7 +7,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "instagram-private-api": "*",
+    "nodejs-insta-private-api": "*",
     "readline": "^1.3.0"
   }
 }
