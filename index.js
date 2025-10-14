@@ -8,7 +8,7 @@ const readline = require('readline-sync');
 const chalk = require('chalk');
 
 const { IgApiClient } = require('nodejs-insta-private-api');
-const Utils = require('nodejs-insta-private-api/src/utils');
+const Utils = require('nodejs-insta-private-api/dist/utils');
 
 const SESSION_FILE = path.resolve(process.cwd(), 'session.json');
 
@@ -24,6 +24,8 @@ const originalWarn = console.warn;
 console.warn = (...args) => originalWarn(chalk.red(args.join(' ')));
 const originalError = console.error;
 console.error = (...args) => originalError(chalk.red(args.join(' ')));
+
+// ===== Functions =====
 
 async function promptCredentials() {
   const username = readline.question(chalk.red('Enter your Instagram username: '));
@@ -114,13 +116,16 @@ function loadMessagesFromFile(filePath) {
   return { lines, fullText: txt };
 }
 
+// ===== Main =====
+
 async function main() {
   console.log('=== Instagram Group Sender (uses nodejs-insta-private-api) ===\n');
 
   const ig = new IgApiClient();
 
-  // Try load session or login
+  // ==== Load session if exists ====
   let loggedIn = await loadSessionIfExists(ig);
+
   if (!loggedIn) {
     const { username, password } = await promptCredentials();
     loggedIn = await doLogin(ig, username, password);
@@ -130,13 +135,13 @@ async function main() {
     }
   }
 
-  // Alegere mod trimitere
+  // ==== Choose send mode ====
   console.log('\nCum vrei ca botul să trimită mesajele?');
   console.log('1. Linie cu linie');
   console.log('2. Text întreg');
   const sendMode = readline.question(chalk.red('Selectează (1 sau 2): ')).trim();
 
-  // Fetch inbox and threads
+  // ==== Fetch inbox and threads ====
   console.log('\n🔎 Fetching inbox threads...');
   let inbox;
   try {
@@ -163,6 +168,7 @@ async function main() {
     process.exit(0);
   }
 
+  // ==== Load messages ====
   const filePath = readline.question(chalk.red('Enter path to your text file with messages (one per line): ')).trim();
   let messages;
   try {
@@ -177,6 +183,7 @@ async function main() {
   if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
   console.log(`\n▶️ Will send messages in a loop with base delay ${baseDelay}s (uses jitter). Press CTRL+C to stop.\n`);
 
+  // ==== Sending loop ====
   let running = true;
   process.on('SIGINT', () => {
     console.log('\n⏹️ Interrupted by user. Exiting gracefully...');
@@ -186,15 +193,8 @@ async function main() {
   let msgIndex = 0;
   let totalSent = 0;
   while (running) {
-    let toSend;
-    if (sendMode === '2') {
-      // Trimite tot fișierul
-      toSend = messages.fullText;
-    } else {
-      // Linie cu linie
-      toSend = messages.lines[msgIndex % messages.lines.length];
-      msgIndex++;
-    }
+    let toSend = sendMode === '2' ? messages.fullText : messages.lines[msgIndex % messages.lines.length];
+    if (sendMode !== '2') msgIndex++;
 
     for (const g of chosenGroups) {
       if (!running) break;
@@ -213,7 +213,6 @@ async function main() {
         const now = new Date();
         const currentTime = now.toLocaleTimeString();
         const currentDate = now.toLocaleDateString();
-
         console.log(
           `[${currentTime}] ✅ Sent to group ${threadId}: "${toSend}" (total sent: ${totalSent})\n` +
           `Autor: Gyovanny VP\nOra: ${currentTime}\nData: ${currentDate}\n`
