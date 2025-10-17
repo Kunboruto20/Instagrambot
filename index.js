@@ -8,9 +8,10 @@ const readline = require('readline-sync');
 const chalk = require('chalk');
 
 const { IgApiClient } = require('nodejs-insta-private-api');
-const Utils = require('nodejs-insta-private-api/dist/utils');
+const Utils = require('nodejs-insta-private-api/src/utils');
 
 const SESSION_FILE = path.resolve(process.cwd(), 'session.json');
+const SESSION_BACKUP = path.resolve(process.cwd(), 'session_backup.json');
 
 // ===== Banner =====
 console.log(chalk.bold.red("\n=========================================="));
@@ -25,8 +26,6 @@ console.warn = (...args) => originalWarn(chalk.red(args.join(' ')));
 const originalError = console.error;
 console.error = (...args) => originalError(chalk.red(args.join(' ')));
 
-// ===== Functions =====
-
 async function promptCredentials() {
   const username = readline.question(chalk.red('Enter your Instagram username: '));
   const password = readline.question(chalk.red('Enter your Instagram password: '), { hideEchoBack: true });
@@ -37,29 +36,32 @@ async function saveSessionSafe(ig) {
   try {
     const session = await ig.saveSession();
     fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
-    console.log('🔐 Session saved to', SESSION_FILE);
+    fs.writeFileSync(SESSION_BACKUP, JSON.stringify(session, null, 2), { mode: 0o600 });
+    console.log('🔐 Session saved successfully.');
   } catch (e) {
     console.warn('⚠️ Could not save session:', e.message || e);
   }
 }
 
 async function loadSessionIfExists(ig) {
-  if (!fs.existsSync(SESSION_FILE)) return false;
-  try {
-    const raw = fs.readFileSync(SESSION_FILE, 'utf8');
-    const session = JSON.parse(raw);
-    await ig.loadSession(session);
-    if (await ig.isSessionValid()) {
-      console.log('✅ Loaded existing session (valid).');
-      return true;
-    } else {
-      console.log('⚠️ Saved session is not valid.');
-      return false;
+  const pathsToTry = [SESSION_FILE, SESSION_BACKUP];
+  for (const filePath of pathsToTry) {
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const session = JSON.parse(raw);
+      await ig.loadSession(session);
+      if (await ig.isSessionValid()) {
+        console.log(`✅ Loaded existing session from ${filePath} (valid).`);
+        return true;
+      } else {
+        console.warn(`⚠️ Saved session in ${filePath} is not valid.`);
+      }
+    } catch (e) {
+      console.warn(`⚠️ Failed to load session from ${filePath}:`, e.message || e);
     }
-  } catch (e) {
-    console.warn('⚠️ Failed to load session:', e.message || e);
-    return false;
   }
+  return false;
 }
 
 async function doLogin(ig, username, password) {
@@ -72,7 +74,7 @@ async function doLogin(ig, username, password) {
     // Handle 2FA
     if (err && err.name === 'IgLoginTwoFactorRequiredError') {
       console.log('🔐 Two-factor authentication required.');
-      const twoFactorIdentifier = err.response && err.response.data && err.response.data.two_factor_info && err.response.data.two_factor_info.two_factor_identifier;
+      const twoFactorIdentifier = err.response?.data?.two_factor_info?.two_factor_identifier;
       const code = readline.question(chalk.red('Enter 2FA code: '));
       try {
         await ig.account.twoFactorLogin({
@@ -116,16 +118,13 @@ function loadMessagesFromFile(filePath) {
   return { lines, fullText: txt };
 }
 
-// ===== Main =====
-
 async function main() {
   console.log('=== Instagram Group Sender (uses nodejs-insta-private-api) ===\n');
 
   const ig = new IgApiClient();
 
-  // ==== Load session if exists ====
+  // Try load session or login
   let loggedIn = await loadSessionIfExists(ig);
-
   if (!loggedIn) {
     const { username, password } = await promptCredentials();
     loggedIn = await doLogin(ig, username, password);
@@ -135,13 +134,13 @@ async function main() {
     }
   }
 
-  // ==== Choose send mode ====
+  // Alegere mod trimitere
   console.log('\nCum vrei ca botul să trimită mesajele?');
   console.log('1. Linie cu linie');
   console.log('2. Text întreg');
   const sendMode = readline.question(chalk.red('Selectează (1 sau 2): ')).trim();
 
-  // ==== Fetch inbox and threads ====
+  // Fetch inbox and threads
   console.log('\n🔎 Fetching inbox threads...');
   let inbox;
   try {
@@ -151,9 +150,9 @@ async function main() {
     process.exit(1);
   }
 
-  const threads = (inbox && (inbox.inbox && inbox.inbox.threads)) || (inbox && inbox.threads) || [];
+  const threads = inbox?.inbox?.threads || inbox?.threads || [];
   const groups = threads.filter(t => {
-    const usersCount = (t.users && t.users.length) || (t.thread && t.thread.users && t.thread.users.length) || 0;
+    const usersCount = t.users?.length || t.thread?.users?.length || 0;
     return usersCount > 2 || Boolean(t.thread_title);
   });
 
@@ -168,7 +167,6 @@ async function main() {
     process.exit(0);
   }
 
-  // ==== Load messages ====
   const filePath = readline.question(chalk.red('Enter path to your text file with messages (one per line): ')).trim();
   let messages;
   try {
@@ -183,7 +181,6 @@ async function main() {
   if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
   console.log(`\n▶️ Will send messages in a loop with base delay ${baseDelay}s (uses jitter). Press CTRL+C to stop.\n`);
 
-  // ==== Sending loop ====
   let running = true;
   process.on('SIGINT', () => {
     console.log('\n⏹️ Interrupted by user. Exiting gracefully...');
@@ -194,11 +191,11 @@ async function main() {
   let totalSent = 0;
   while (running) {
     let toSend = sendMode === '2' ? messages.fullText : messages.lines[msgIndex % messages.lines.length];
-    if (sendMode !== '2') msgIndex++;
+    if (sendMode === '1') msgIndex++;
 
     for (const g of chosenGroups) {
       if (!running) break;
-      const threadId = g.thread_id || (g.thread && g.thread.thread_id);
+      const threadId = g.thread_id || g.thread?.thread_id;
       if (!threadId) {
         console.warn('⚠️ Skipping group without thread_id:', g);
         continue;
@@ -211,11 +208,9 @@ async function main() {
 
         totalSent++;
         const now = new Date();
-        const currentTime = now.toLocaleTimeString();
-        const currentDate = now.toLocaleDateString();
         console.log(
-          `[${currentTime}] ✅ Sent to group ${threadId}: "${toSend}" (total sent: ${totalSent})\n` +
-          `Autor: Gyovanny VP\nOra: ${currentTime}\nData: ${currentDate}\n`
+          `[${now.toLocaleTimeString()}] ✅ Sent to group ${threadId}: "${toSend}" (total sent: ${totalSent})\n` +
+          `Autor: Gyovanny VP\nOra: ${now.toLocaleTimeString()}\nData: ${now.toLocaleDateString()}\n`
         );
       } catch (sendErr) {
         console.error(`[${new Date().toLocaleTimeString()}] ❌ Failed to send to ${threadId}:`, sendErr.message || sendErr);
@@ -229,11 +224,11 @@ async function main() {
     await Utils.randomDelay(500, 1200);
   }
 
-  try { await ig.destroy && ig.destroy(); } catch (_) {}
+  try { await ig.destroy?.(); } catch (_) {}
   process.exit(0);
 }
 
 main().catch(err => {
-  console.error('Fatal error:', err && err.message ? err.message : err);
+  console.error('Fatal error:', err?.message || err);
   process.exit(1);
 });
