@@ -8,7 +8,7 @@ const readline = require('readline-sync');
 const chalk = require('chalk');
 
 const { IgApiClient } = require('nodejs-insta-private-api');
-const Utils = require('nodejs-insta-private-api/src/utils');
+const Utils = require('nodejs-insta-private-api/dist/utils');
 
 const SESSION_FILE = path.resolve(process.cwd(), 'session.json');
 const SESSION_BACKUP = path.resolve(process.cwd(), 'session_backup.json');
