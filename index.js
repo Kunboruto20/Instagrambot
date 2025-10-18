@@ -34,11 +34,13 @@ async function promptCredentials() {
 
 async function saveSessionSafe(ig) {
   try {
+    // Prefer client.saveSessionToFile if available
     if (typeof ig.saveSessionToFile === 'function') {
       await ig.saveSessionToFile(SESSION_FILE, SESSION_BACKUP);
       console.log('🔐 Session saved successfully (via client.saveSessionToFile).');
       return;
     }
+    // Fallback: use ig.saveSession() and write to disk
     const session = await ig.saveSession();
     fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
     try { fs.writeFileSync(SESSION_BACKUP, JSON.stringify(session, null, 2), { mode: 0o600 }); } catch (_) {}
@@ -62,13 +64,14 @@ function inspectSessionObject(obj) {
         cookieCount = parsed.cookies.length;
         cookieKeys = parsed.cookies.slice(0, 20).map(c => c.key || c.name || '(?)');
       }
-    } catch (e) { }
+    } catch (e) { /* ignore */ }
   } else if (cookieType === 'object' && cookies !== null) {
+    // object form (cookie jar object)
     try {
       const arr = Array.isArray(cookies.cookies) ? cookies.cookies : (cookies.cookies || []);
       cookieCount = arr.length;
       cookieKeys = (arr.slice(0, 20)).map(c => c.key || c.name || '(?)');
-    } catch (e) { }
+    } catch (e) { /* ignore */ }
   }
   return {
     ok: true,
@@ -83,6 +86,7 @@ function inspectSessionObject(obj) {
 }
 
 async function loadSessionIfExists(ig) {
+  // 1) If client provides helper tryLoadSessionFileIfExists, use it (preferred).
   try {
     if (typeof ig.tryLoadSessionFileIfExists === 'function') {
       const ok = await ig.tryLoadSessionFileIfExists(SESSION_FILE);
@@ -90,20 +94,25 @@ async function loadSessionIfExists(ig) {
         console.log(`✅ Loaded existing session (client.tryLoadSessionFileIfExists) -> ${SESSION_FILE}`);
         return true;
       }
+      // try backup
       const okb = await ig.tryLoadSessionFileIfExists(SESSION_BACKUP);
       if (okb) {
         console.log(`✅ Loaded existing session from backup (client.tryLoadSessionFileIfExists) -> ${SESSION_BACKUP}`);
         return true;
       }
+      // fallthrough to manual tries
     }
   } catch (e) {
+    // ignore and fall through
     if (ig.state && ig.state.verbose) console.warn('[Session] tryLoadSessionFileIfExists error:', e && e.message);
   }
 
+  // 2) If client exposes loadSessionFromFile/loadSessionToFile, prefer those
   try {
     if (typeof ig.loadSessionFromFile === 'function') {
       const ok = await ig.loadSessionFromFile(SESSION_FILE);
       if (ok) {
+        // validate
         if (typeof ig.isSessionValid === 'function') {
           try {
             if (await ig.isSessionValid()) {
@@ -112,7 +121,9 @@ async function loadSessionIfExists(ig) {
             } else {
               console.warn(`⚠️ Saved session in ${SESSION_FILE} is not valid.`);
             }
-          } catch (e) { }
+          } catch (e) {
+            // if isSessionValid fails, still proceed to manual fallback
+          }
         } else {
           console.log(`✅ Loaded session object via client.loadSessionFromFile: ${SESSION_FILE}`);
           return true;
@@ -123,15 +134,18 @@ async function loadSessionIfExists(ig) {
     if (ig.state && ig.state.verbose) console.warn('[Session] loadSessionFromFile error:', e && e.message);
   }
 
+  // 3) Manual load (generic): try session.json and backup
   const candidates = [SESSION_FILE, SESSION_BACKUP];
   for (const p of candidates) {
     if (!fs.existsSync(p)) continue;
     try {
       const raw = fs.readFileSync(p, 'utf8');
       const sessionObj = JSON.parse(raw);
+      // Try client.loadSession(sessionObj) if available
       if (typeof ig.loadSession === 'function') {
         try {
           await ig.loadSession(sessionObj);
+          // validate
           if (typeof ig.isSessionValid === 'function') {
             const valid = await ig.isSessionValid();
             if (valid) {
@@ -139,16 +153,19 @@ async function loadSessionIfExists(ig) {
               return true;
             } else {
               console.warn(`⚠️ Saved session in ${p} is not valid.`);
+              // continue to next candidate
             }
           } else {
             console.log(`✅ Loaded existing session from ${p} (via ig.loadSession, no validation available)`);
             return true;
           }
         } catch (e) {
+          // ig.loadSession failed: try to inspect and continue
           if (ig.state && ig.state.verbose) console.warn('[Session] ig.loadSession failed:', e && e.message);
         }
       }
 
+      // If we reached here, do a best-effort inspect and show diagnostics
       const info = inspectSessionObject(sessionObj);
       console.log('Top-level keys in session.json:', info.topLevelKeys || Object.keys(sessionObj));
       console.log('Type of "cookies" property:', info.cookiesType);
@@ -174,6 +191,7 @@ async function doLogin(ig, username, password) {
     await saveSessionSafe(ig);
     return true;
   } catch (err) {
+    // Handle 2FA
     if (err && err.name === 'IgLoginTwoFactorRequiredError') {
       console.log('🔐 Two-factor authentication required.');
       const twoFactorIdentifier = err.response && err.response.data && err.response.data.two_factor_info && err.response.data.two_factor_info.two_factor_identifier;
@@ -225,6 +243,7 @@ async function main() {
 
   const ig = new IgApiClient();
 
+  // Try load session or login
   let loggedIn = false;
   try {
     loggedIn = await loadSessionIfExists(ig);
@@ -241,43 +260,13 @@ async function main() {
     }
   }
 
-  // ===== NEW: Realtime MQTT integration =====
-  try {
-    await ig.connectRealtime();
-    if (ig.isRealtimeConnected()) {
-      console.log('📡 Connected to Realtime MQTT!');
-    }
-
-    ig.realtime.on('directMessage', async (payload) => {
-      console.log('💬 [Realtime] New DM:', payload);
-    });
-
-    ig.realtime.on('presenceUpdate', (payload) => {
-      console.log('👤 [Realtime] Presence update:', payload);
-    });
-
-    ig.realtime.on('typingIndicator', (payload) => {
-      console.log('✏️ [Realtime] Typing indicator:', payload);
-    });
-
-    ig.realtime.on('pushNotification', (payload) => {
-      console.log('🔔 [Realtime] Push notification:', payload);
-    });
-
-    ig.realtime.on('activityNotification', (payload) => {
-      console.log('⚡ [Realtime] Activity notification:', payload);
-    });
-
-  } catch (e) {
-    console.warn('⚠️ Could not connect to Realtime MQTT:', e.message || e);
-  }
-
-  // ===== Rest of your original spam loop logic continues here =====
+  // Alegere mod trimitere
   console.log('\nCum vrei ca botul să trimită mesajele?');
   console.log('1. Linie cu linie');
   console.log('2. Text întreg');
   const sendMode = readline.question(chalk.red('Selectează (1 sau 2): ')).trim();
 
+  // Fetch inbox and threads
   console.log('\n🔎 Fetching inbox threads...');
   let inbox;
   try {
