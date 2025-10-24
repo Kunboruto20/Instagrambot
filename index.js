@@ -329,6 +329,7 @@ function extractLastMessageText(thread) {
       if (it.text) return it.text;
       if (it.item_type === 'text' && it.text) return it.text;
       if (it.message && it.message.text) return it.message.text;
+      if (it.texts && Array.isArray(it.texts) && it.texts[0]) return it.texts[0];
     }
     if (thread.thread && thread.thread.last_message && thread.thread.last_message.text) return thread.thread.last_message.text;
     if (thread.last_message) {
@@ -338,6 +339,45 @@ function extractLastMessageText(thread) {
     if (thread.last_activity_at && typeof thread.last_activity_at === 'string') return thread.last_activity_at;
   } catch (e) { /* ignore */ }
   return null;
+}
+
+// Helper: extract last message sender (username or pk) from thread object
+function extractLastMessageSender(thread) {
+  try {
+    if (thread.last_permanent_item && thread.last_permanent_item.user_id) return String(thread.last_permanent_item.user_id);
+    if (thread.last_permanent_item && thread.last_permanent_item.user && (thread.last_permanent_item.user.username || thread.last_permanent_item.user.pk)) {
+      return thread.last_permanent_item.user.username || String(thread.last_permanent_item.user.pk);
+    }
+
+    if (thread.items && Array.isArray(thread.items) && thread.items.length > 0) {
+      const it = thread.items[0];
+      if (it.user_id) return String(it.user_id);
+      if (it.user && (it.user.username || it.user.pk)) return it.user.username || String(it.user.pk);
+      if (it.message && it.message.user_id) return String(it.message.user_id);
+      if (it.account && (it.account.username || it.account.pk)) return it.account.username || String(it.account.pk);
+    }
+
+    if (thread.thread && thread.thread.last_message && thread.thread.last_message.user_id) return String(thread.thread.last_message.user_id);
+    if (thread.last_message && thread.last_message.user_id) return String(thread.last_message.user_id);
+    if (thread.last_message && thread.last_message.user && (thread.last_message.user.username || thread.last_message.user.pk)) {
+      return thread.last_message.user.username || String(thread.last_message.user.pk);
+    }
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
+// sleep with abortable check: checks every tickMs ms if worker still running
+async function sleepWithAbort(totalMs, worker, tickMs = 120) {
+  const start = Date.now();
+  while (worker.running && (Date.now() - start) < totalMs) {
+    const remaining = totalMs - (Date.now() - start);
+    await new Promise(res => setTimeout(res, Math.min(tickMs, Math.max(10, remaining))));
+  }
+}
+
+// Helper: small wrapper to normalize thread id
+function getThreadId(thread) {
+  return thread.thread_id || thread.thread?.thread_id || null;
 }
 
 async function main() {
@@ -361,6 +401,30 @@ async function main() {
       process.exit(1);
     }
   }
+
+  // Get owner identity (authenticated user) — we'll restrict commands to this user only
+  let owner = { pk: null, username: null };
+  try {
+    if (ig.account && typeof ig.account.currentUser === 'function') {
+      const me = await ig.account.currentUser();
+      owner.pk = me.pk ? String(me.pk) : (me.id ? String(me.id) : owner.pk);
+      owner.username = me.username ? String(me.username) : owner.username;
+    } else if (ig.state && ig.state.cookieUserId) {
+      owner.pk = String(ig.state.cookieUserId);
+    }
+    // fallback: try to read session file to infer username if present (best-effort)
+    if ((!owner.pk || !owner.username) && fs.existsSync(SESSION_FILE)) {
+      try {
+        const raw = fs.readFileSync(SESSION_FILE, 'utf8');
+        const s = JSON.parse(raw);
+        if (!owner.username && s.username) owner.username = String(s.username);
+        if (!owner.pk && s.pk) owner.pk = String(s.pk);
+      } catch (_) { /* ignore */ }
+    }
+  } catch (e) {
+    console.warn('⚠️ Could not fetch owner info:', e && e.message ? e.message : e);
+  }
+  console.log(`Logat ca: ${owner.username || '(unknown)'} ${owner.pk ? `(id:${owner.pk})` : ''}`);
 
   // NEW: Ask user if they want /start and /stop commands
   console.log('\nVrei comenzi de /start și /stop?');
@@ -427,7 +491,7 @@ async function main() {
     const chosenGroups = chooseGroupsFromList(groups);
     if (!chosenGroups.length) {
       console.log('❌ Niciun grup selectat valid. Exiting.');
-      process.exit(0);
+      process.exit(1);
     }
 
     const filePath = readline.question(chalk.red('Enter path to your text file with messages (one per line): ')).trim();
@@ -478,7 +542,7 @@ async function main() {
           const now = new Date();
           console.log(
             `[${now.toLocaleTimeString()}] ✅ Sent to group ${threadId}: "${toSend}" (total sent: ${totalSent})\n` +
-            `Autor: Gyovanny VP\nOra: ${now.toLocaleTimeString()}\nData: ${now.toLocaleDateString()}\n`
+            `Autor: Gyovanny Srg\nOra: ${now.toLocaleTimeString()}\nData: ${now.toLocaleDateString()}\n`
           );
         } catch (sendErr) {
           console.error(`[${new Date().toLocaleTimeString()}] ❌ Failed to send to ${threadId}:`, sendErr.message || sendErr);
@@ -507,18 +571,18 @@ async function main() {
 
   // state maps
   const lastSeenText = new Map(); // threadId -> last seen message text (to detect new commands)
-  const activeWorkers = new Map(); // threadId -> { running: bool, controller: { stop: fn } }
+  const activeWorkers = new Map(); // threadId -> { running: bool, stop: fn }
 
   // helper to start worker for a thread
   async function startSpamForThread(thread, delaySec) {
-    const threadId = thread.thread_id || thread.thread?.thread_id;
+    const threadId = getThreadId(thread);
     if (!threadId) return;
     if (activeWorkers.has(threadId)) {
       console.log(`[${new Date().toLocaleTimeString()}] ⚠️ Already running on ${threadId}`);
       return;
     }
     const isGroup = (thread.users && thread.users.length > 2) || Boolean(thread.thread_title) || (thread.thread && thread.thread.users && thread.thread.users.length > 2);
-    const { messages, spamType, defaultDelaySec } = commandModeConfig;
+    const { messages, spamType } = commandModeConfig;
     const worker = { running: true, stop: () => { worker.running = false; } };
     activeWorkers.set(threadId, worker);
 
@@ -526,31 +590,34 @@ async function main() {
     let idx = 0;
     while (worker.running) {
       try {
+        if (!worker.running) break;
         const toSend = (spamType === 'full') ? messages.fullText : messages.lines[idx % messages.lines.length];
         if (spamType !== 'full') idx++;
         await Utils.retryOperation(async () => {
           await sendMessageToThread(ig, threadId, toSend, isGroup);
         }, 3, 1500);
         const now = new Date();
-        console.log(`[${now.toLocaleTimeString()}] ✅ Sent to ${threadId}: "${toSend}"`);
+        console.log(`[${now.toLocaleTimeString()}] ✅ Sent to ${threadId}: "${toSend}"\nAutor: Gyovanny Srg`);
       } catch (err) {
         console.error(`[${new Date().toLocaleTimeString()}] ❌ Error sending to ${threadId}:`, err && err.message ? err.message : err);
       }
-      // wait delaySec +- jitter
+      // wait delaySec +- jitter but allow immediate stop by checking worker.running frequently
       const min = Math.max(200, delaySec * 1000 - 300);
       const max = delaySec * 1000 + 700;
-      await Utils.randomDelay(min, max);
+      const sleepMs = Math.floor(Math.random() * (max - min + 1)) + min;
+      await sleepWithAbort(sleepMs, worker);
     }
 
     activeWorkers.delete(threadId);
     console.log(`[${new Date().toLocaleTimeString()}] ⏹️ Stopped spam on ${threadId}`);
   }
 
-  // helper to stop worker for a threadId
+  // helper to stop worker for a threadId (immediate)
   function stopSpamForThreadId(threadId) {
     const w = activeWorkers.get(threadId);
     if (w) {
       w.stop();
+      console.log(`[${new Date().toLocaleTimeString()}] ⏹️ Stop requested for ${threadId}`);
     } else {
       console.log(`[${new Date().toLocaleTimeString()}] ⚠️ No active spam on ${threadId} to stop.`);
     }
@@ -562,7 +629,7 @@ async function main() {
     const inbox = await ig.dm.getInbox();
     const threads = inbox?.inbox?.threads || inbox?.threads || [];
     for (const t of threads) {
-      const tid = t.thread_id || t.thread?.thread_id;
+      const tid = getThreadId(t);
       if (!tid) continue;
       const last = extractLastMessageText(t) || '';
       lastSeenText.set(tid, last);
@@ -587,7 +654,7 @@ async function main() {
       const threads = inbox?.inbox?.threads || inbox?.threads || [];
 
       for (const t of threads) {
-        const tid = t.thread_id || t.thread?.thread_id;
+        const tid = getThreadId(t);
         if (!tid) continue;
         const last = extractLastMessageText(t) || '';
         const prev = lastSeenText.get(tid) || '';
@@ -599,20 +666,37 @@ async function main() {
           // check for /startN or /start or /stop
           const startMatch = normalized.match(/^\/start\s*(\d+)?$/i) || normalized.match(/^\/start(\d+)$/i) || normalized.match(/^\/start-(\d+)$/i);
           const stopMatch = normalized.match(/^\/stop$/i);
-          if (startMatch) {
-            // determine delay
-            const n = startMatch[1];
-            const delaySec = n ? parseFloat(n) : commandModeConfig.defaultDelaySec;
-            // start worker for THIS thread
-            // but first we ensure we load messages from configured file (already loaded in commandModeConfig)
-            // launch worker asynchronously without blocking polling
-            startSpamForThread(t, delaySec).catch(err => {
-              console.error('Worker start failed:', err && err.message ? err.message : err);
-            });
-          } else if (stopMatch) {
-            stopSpamForThreadId(tid);
+
+          // Only allow commands from the authenticated owner
+          const sender = extractLastMessageSender(t);
+          let allowed = false;
+          if (sender) {
+            // compare both username and pk if available
+            if (owner.pk && String(owner.pk) === String(sender)) allowed = true;
+            if (owner.username && String(owner.username).toLowerCase() === String(sender).toLowerCase()) allowed = true;
           } else {
-            // Not a command - ignore
+            // if we can't detect sender, be conservative and disallow
+            allowed = false;
+          }
+
+          if (!allowed) {
+            // ignore command from non-owner
+            console.log(`[${new Date().toLocaleTimeString()}] ⚠️ Ignored command in ${tid} from non-owner (${sender || 'unknown'})`);
+          } else {
+            // owner issued command
+            if (startMatch) {
+              // determine delay
+              const n = startMatch[1];
+              const delaySec = n ? parseFloat(n) : commandModeConfig.defaultDelaySec;
+              // start worker for THIS thread
+              startSpamForThread(t, delaySec).catch(err => {
+                console.error('Worker start failed:', err && err.message ? err.message : err);
+              });
+            } else if (stopMatch) {
+              stopSpamForThreadId(tid);
+            } else {
+              // Not a command - ignore
+            }
           }
         }
 
