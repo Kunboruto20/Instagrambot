@@ -238,6 +238,108 @@ function loadMessagesFromFile(filePath) {
   return { lines, fullText: txt };
 }
 
+// New helper: robust send that attempts several possible send methods to support DM and Group threads
+async function sendMessageToThread(ig, threadId, message, isGroup) {
+  // Attempt several known method signatures in a best-effort order.
+  // Wrap each in try/catch and throw at the end if none worked.
+  const attempts = [];
+
+  // 1) ig.dm.sendToThread({ threadId, message })
+  attempts.push(async () => {
+    if (ig.dm && typeof ig.dm.sendToThread === 'function') {
+      await ig.dm.sendToThread({ threadId, message });
+      return;
+    }
+    throw new Error('sendToThread not available');
+  });
+
+  // 2) ig.dm.send({ threadId, message }) - generic
+  attempts.push(async () => {
+    if (ig.dm && typeof ig.dm.send === 'function') {
+      await ig.dm.send({ threadId, message });
+      return;
+    }
+    throw new Error('dm.send not available');
+  });
+
+  // 3) ig.dm.sendToGroup({ threadId, message }) - keep for compatibility with groups
+  attempts.push(async () => {
+    if (ig.dm && typeof ig.dm.sendToGroup === 'function' && isGroup) {
+      await ig.dm.sendToGroup({ threadId, message });
+      return;
+    }
+    throw new Error('sendToGroup not available or not a group');
+  });
+
+  // 4) ig.directThread.broadcast(...) variants
+  attempts.push(async () => {
+    if (ig.directThread && typeof ig.directThread.broadcast === 'function') {
+      // try object form
+      try {
+        await ig.directThread.broadcast({ threadId, message });
+        return;
+      } catch (e) {
+        // try alternate signature
+        try {
+          await ig.directThread.broadcast(threadId, message);
+          return;
+        } catch (e2) {
+          throw new Error('directThread.broadcast failed');
+        }
+      }
+    }
+    throw new Error('directThread.broadcast not available');
+  });
+
+  // 5) As a last resort, try ig.entity.directThread(...) patterns (some libs expose entity helpers)
+  attempts.push(async () => {
+    try {
+      if (typeof ig.entity === 'function' || typeof ig.entity === 'object') {
+        const entity = (typeof ig.entity === 'function') ? ig.entity('direct_thread', threadId) : (ig.entity && ig.entity.directThread ? ig.entity.directThread(threadId) : null);
+        if (entity && typeof entity.broadcast === 'function') {
+          await entity.broadcast(message);
+          return;
+        }
+      }
+    } catch (e) { /* ignore */ }
+    throw new Error('entity.directThread broadcast not available');
+  });
+
+  // Execute attempts in order; return on first success
+  let lastErr = null;
+  for (const fn of attempts) {
+    try {
+      await fn();
+      return; // success
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  // If we get here, no method worked
+  throw new Error(`No available send method succeeded for thread ${threadId}: ${lastErr && lastErr.message}`);
+}
+
+// Helper: extract last message text robustly from a thread object
+function extractLastMessageText(thread) {
+  try {
+    // common shapes
+    if (thread.last_permanent_item && thread.last_permanent_item.text) return thread.last_permanent_item.text;
+    if (thread.items && Array.isArray(thread.items) && thread.items.length > 0) {
+      const it = thread.items[0];
+      if (it.text) return it.text;
+      if (it.item_type === 'text' && it.text) return it.text;
+      if (it.message && it.message.text) return it.message.text;
+    }
+    if (thread.thread && thread.thread.last_message && thread.thread.last_message.text) return thread.thread.last_message.text;
+    if (thread.last_message) {
+      if (typeof thread.last_message === 'string') return thread.last_message;
+      if (thread.last_message.text) return thread.last_message.text;
+    }
+    if (thread.last_activity_at && typeof thread.last_activity_at === 'string') return thread.last_activity_at;
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
 async function main() {
   console.log('=== Instagram Group Sender (uses nodejs-insta-private-api) ===\n');
 
@@ -260,96 +362,275 @@ async function main() {
     }
   }
 
-  // Alegere mod trimitere
-  console.log('\nCum vrei ca botul să trimită mesajele?');
-  console.log('1. Linie cu linie');
-  console.log('2. Text întreg');
-  const sendMode = readline.question(chalk.red('Selectează (1 sau 2): ')).trim();
+  // NEW: Ask user if they want /start and /stop commands
+  console.log('\nVrei comenzi de /start și /stop?');
+  console.log('1. da');
+  console.log('2. nu');
+  const wantCommands = readline.question(chalk.red('Selectează (1 sau 2): ')).trim() === '1';
 
-  // Fetch inbox and threads
-  console.log('\n🔎 Fetching inbox threads...');
-  let inbox;
-  try {
-    inbox = await ig.dm.getInbox();
-  } catch (e) {
-    console.error('❌ Failed to fetch inbox:', e.message || e);
-    process.exit(1);
+  // If they want commands, ask spam type and file path and base delay now (as requested)
+  let commandModeConfig = null;
+  if (wantCommands) {
+    console.log('\nAlege tipul de spam:');
+    console.log('1. linie pe linie');
+    console.log('2. text întreg');
+    const spamType = readline.question(chalk.red('Selectează (1 sau 2): ')).trim();
+    const filePath = readline.question(chalk.red('Enter path to your text file with messages (one per line): ')).trim();
+    let messages;
+    try {
+      messages = loadMessagesFromFile(filePath);
+    } catch (e) {
+      console.error('❌', e.message || e);
+      process.exit(1);
+    }
+    // Note: baseDelay will be provided in the /startN command (N = seconds). We'll still ask for a fallback default.
+    const delaySecInput = readline.question(chalk.red('Enter default delay seconds between sends (used only if /start has no number): ')).trim();
+    let baseDelay = parseFloat(delaySecInput);
+    if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
+    console.log(chalk.red('\nCommand mode enabled. Send /startN (e.g. /start1, /start5) inside ANY conversation to start spam there with N seconds delay. Send /stop to stop in that conversation.\n'));
+    commandModeConfig = {
+      spamType: spamType === '2' ? 'full' : 'line',
+      messages,
+      defaultDelaySec: baseDelay
+    };
   }
 
-  const threads = inbox?.inbox?.threads || inbox?.threads || [];
-  const groups = threads.filter(t => {
-    const usersCount = t.users?.length || t.thread?.users?.length || 0;
-    return usersCount > 2 || Boolean(t.thread_title);
-  });
+  // If not command mode, preserve previous behavior: ask how to send, fetch inbox, select conversations, etc.
+  if (!wantCommands) {
+    // Alegere mod trimitere
+    console.log('\nCum vrei ca botul să trimită mesajele?');
+    console.log('1. Linie cu linie');
+    console.log('2. Text întreg');
+    var sendMode = readline.question(chalk.red('Selectează (1 sau 2): ')).trim();
 
-  if (!groups.length) {
-    console.log('❌ Nu s-au găsit grupuri (thread-uri de tip group).');
-    process.exit(0);
-  }
+    // Fetch inbox and threads
+    console.log('\n🔎 Fetching inbox threads...');
+    let inbox;
+    try {
+      inbox = await ig.dm.getInbox();
+    } catch (e) {
+      console.error('❌ Failed to fetch inbox:', e.message || e);
+      process.exit(1);
+    }
 
-  const chosenGroups = chooseGroupsFromList(groups);
-  if (!chosenGroups.length) {
-    console.log('❌ Niciun grup selectat valid. Exiting.');
-    process.exit(0);
-  }
+    const threads = inbox?.inbox?.threads || inbox?.threads || [];
+    const groups = threads.filter(t => {
+      const usersCount = t.users?.length || t.thread?.users?.length || 0;
+      return usersCount > 2 || Boolean(t.thread_title);
+    });
 
-  const filePath = readline.question(chalk.red('Enter path to your text file with messages (one per line): ')).trim();
-  let messages;
-  try {
-    messages = loadMessagesFromFile(filePath);
-  } catch (e) {
-    console.error('❌', e.message || e);
-    process.exit(1);
-  }
+    if (!groups.length) {
+      console.log('❌ Nu s-au găsit grupuri (thread-uri de tip group).');
+      process.exit(0);
+    }
 
-  const delaySecInput = readline.question(chalk.red('Enter delay seconds between sends (per-message base, can be fractional): ')).trim();
-  let baseDelay = parseFloat(delaySecInput);
-  if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
-  console.log(`\n▶️ Will send messages in a loop with base delay ${baseDelay}s (uses jitter). Press CTRL+C to stop.\n`);
+    const chosenGroups = chooseGroupsFromList(groups);
+    if (!chosenGroups.length) {
+      console.log('❌ Niciun grup selectat valid. Exiting.');
+      process.exit(0);
+    }
 
-  let running = true;
-  process.on('SIGINT', () => {
-    console.log('\n⏹️ Interrupted by user. Exiting gracefully...');
-    running = false;
-  });
+    const filePath = readline.question(chalk.red('Enter path to your text file with messages (one per line): ')).trim();
+    let messages;
+    try {
+      messages = loadMessagesFromFile(filePath);
+    } catch (e) {
+      console.error('❌', e.message || e);
+      process.exit(1);
+    }
 
-  let msgIndex = 0;
-  let totalSent = 0;
-  while (running) {
-    let toSend = sendMode === '2' ? messages.fullText : messages.lines[msgIndex % messages.lines.length];
-    if (sendMode === '1') msgIndex++;
+    const delaySecInput = readline.question(chalk.red('Enter delay seconds between sends (per-message base, can be fractional): ')).trim();
+    let baseDelay = parseFloat(delaySecInput);
+    if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
+    console.log(`\n▶️ Will send messages in a loop with base delay ${baseDelay}s (uses jitter). Press CTRL+C to stop.\n`);
 
-    for (const g of chosenGroups) {
-      if (!running) break;
-      const threadId = g.thread_id || g.thread?.thread_id;
-      if (!threadId) {
-        console.warn('⚠️ Skipping group without thread_id:', g);
-        continue;
+    let running = true;
+    process.on('SIGINT', () => {
+      console.log('\n⏹️ Interrupted by user. Exiting gracefully...');
+      running = false;
+    });
+
+    let msgIndex = 0;
+    let totalSent = 0;
+    while (running) {
+      let toSend = sendMode === '2' ? messages.fullText : messages.lines[msgIndex % messages.lines.length];
+      if (sendMode === '1') msgIndex++;
+
+      for (const g of chosenGroups) {
+        if (!running) break;
+        const threadId = g.thread_id || g.thread?.thread_id;
+        if (!threadId) {
+          console.warn('⚠️ Skipping group without thread_id:', g);
+          continue;
+        }
+
+        // Determine if this thread likely a group (heuristic)
+        const usersCount = g.users?.length || g.thread?.users?.length || 0;
+        const isGroup = usersCount > 2 || Boolean(g.thread_title);
+
+        try {
+          await Utils.retryOperation(async () => {
+            // Use robust send helper which tries multiple methods to support both DMs and groups
+            await sendMessageToThread(ig, threadId, toSend, isGroup);
+          }, 3, 1500);
+
+          totalSent++;
+          const now = new Date();
+          console.log(
+            `[${now.toLocaleTimeString()}] ✅ Sent to group ${threadId}: "${toSend}" (total sent: ${totalSent})\n` +
+            `Autor: Gyovanny VP\nOra: ${now.toLocaleTimeString()}\nData: ${now.toLocaleDateString()}\n`
+          );
+        } catch (sendErr) {
+          console.error(`[${new Date().toLocaleTimeString()}] ❌ Failed to send to ${threadId}:`, sendErr.message || sendErr);
+        }
+
+        const min = Math.max(200, baseDelay * 1000 - 500);
+        const max = baseDelay * 1000 + 1500;
+        await Utils.randomDelay(min, max);
       }
 
+      await Utils.randomDelay(500, 1200);
+    }
+
+    try { await ig.destroy?.(); } catch (_) {}
+    process.exit(0);
+  }
+
+  // -------------------------
+  // COMMAND MODE (polling + per-thread control)
+  // -------------------------
+  // We'll poll the inbox periodically to detect /startN and /stop commands inside any conversation.
+  // When /startN is seen in a thread, we launch an async worker that sends messages in loop to THAT thread
+  // with delay N seconds (if N absent, use defaultDelaySec).
+  // When /stop is seen in that thread, we stop the worker for that thread.
+  // This implementation uses polling; it tries to be robust across different inbox shapes.
+
+  // state maps
+  const lastSeenText = new Map(); // threadId -> last seen message text (to detect new commands)
+  const activeWorkers = new Map(); // threadId -> { running: bool, controller: { stop: fn } }
+
+  // helper to start worker for a thread
+  async function startSpamForThread(thread, delaySec) {
+    const threadId = thread.thread_id || thread.thread?.thread_id;
+    if (!threadId) return;
+    if (activeWorkers.has(threadId)) {
+      console.log(`[${new Date().toLocaleTimeString()}] ⚠️ Already running on ${threadId}`);
+      return;
+    }
+    const isGroup = (thread.users && thread.users.length > 2) || Boolean(thread.thread_title) || (thread.thread && thread.thread.users && thread.thread.users.length > 2);
+    const { messages, spamType, defaultDelaySec } = commandModeConfig;
+    const worker = { running: true, stop: () => { worker.running = false; } };
+    activeWorkers.set(threadId, worker);
+
+    console.log(`[${new Date().toLocaleTimeString()}] ▶️ Started spam on ${threadId} with delay ${delaySec}s (type: ${spamType})`);
+    let idx = 0;
+    while (worker.running) {
       try {
+        const toSend = (spamType === 'full') ? messages.fullText : messages.lines[idx % messages.lines.length];
+        if (spamType !== 'full') idx++;
         await Utils.retryOperation(async () => {
-          await ig.dm.sendToGroup({ threadId, message: toSend });
+          await sendMessageToThread(ig, threadId, toSend, isGroup);
         }, 3, 1500);
-
-        totalSent++;
         const now = new Date();
-        console.log(
-          `[${now.toLocaleTimeString()}] ✅ Sent to group ${threadId}: "${toSend}" (total sent: ${totalSent})\n` +
-          `Autor: Gyovanny VP\nOra: ${now.toLocaleTimeString()}\nData: ${now.toLocaleDateString()}\n`
-        );
-      } catch (sendErr) {
-        console.error(`[${new Date().toLocaleTimeString()}] ❌ Failed to send to ${threadId}:`, sendErr.message || sendErr);
+        console.log(`[${now.toLocaleTimeString()}] ✅ Sent to ${threadId}: "${toSend}"`);
+      } catch (err) {
+        console.error(`[${new Date().toLocaleTimeString()}] ❌ Error sending to ${threadId}:`, err && err.message ? err.message : err);
       }
-
-      const min = Math.max(200, baseDelay * 1000 - 500);
-      const max = baseDelay * 1000 + 1500;
+      // wait delaySec +- jitter
+      const min = Math.max(200, delaySec * 1000 - 300);
+      const max = delaySec * 1000 + 700;
       await Utils.randomDelay(min, max);
     }
 
-    await Utils.randomDelay(500, 1200);
+    activeWorkers.delete(threadId);
+    console.log(`[${new Date().toLocaleTimeString()}] ⏹️ Stopped spam on ${threadId}`);
   }
 
+  // helper to stop worker for a threadId
+  function stopSpamForThreadId(threadId) {
+    const w = activeWorkers.get(threadId);
+    if (w) {
+      w.stop();
+    } else {
+      console.log(`[${new Date().toLocaleTimeString()}] ⚠️ No active spam on ${threadId} to stop.`);
+    }
+  }
+
+  // initial fetch to populate lastSeenText
+  console.log('\n🔎 Initial fetch of inbox to start command listener...');
+  try {
+    const inbox = await ig.dm.getInbox();
+    const threads = inbox?.inbox?.threads || inbox?.threads || [];
+    for (const t of threads) {
+      const tid = t.thread_id || t.thread?.thread_id;
+      if (!tid) continue;
+      const last = extractLastMessageText(t) || '';
+      lastSeenText.set(tid, last);
+    }
+  } catch (e) {
+    console.warn('⚠️ Initial inbox fetch failed:', e && e.message ? e.message : e);
+  }
+
+  console.log('✅ Command listener started. Polling for commands every 5 seconds. (Use CTRL+C to exit the whole script)\n');
+
+  // polling loop
+  let keepRunning = true;
+  process.on('SIGINT', () => {
+    console.log('\n⏹️ Interrupted by user. Exiting gracefully and stopping all workers...');
+    keepRunning = false;
+    for (const [tid, w] of activeWorkers.entries()) w.stop();
+  });
+
+  while (keepRunning) {
+    try {
+      const inbox = await ig.dm.getInbox();
+      const threads = inbox?.inbox?.threads || inbox?.threads || [];
+
+      for (const t of threads) {
+        const tid = t.thread_id || t.thread?.thread_id;
+        if (!tid) continue;
+        const last = extractLastMessageText(t) || '';
+        const prev = lastSeenText.get(tid) || '';
+
+        // if changed and not empty, inspect for commands
+        if (last && last !== prev) {
+          // normalize
+          const normalized = String(last).trim();
+          // check for /startN or /start or /stop
+          const startMatch = normalized.match(/^\/start\s*(\d+)?$/i) || normalized.match(/^\/start(\d+)$/i) || normalized.match(/^\/start-(\d+)$/i);
+          const stopMatch = normalized.match(/^\/stop$/i);
+          if (startMatch) {
+            // determine delay
+            const n = startMatch[1];
+            const delaySec = n ? parseFloat(n) : commandModeConfig.defaultDelaySec;
+            // start worker for THIS thread
+            // but first we ensure we load messages from configured file (already loaded in commandModeConfig)
+            // launch worker asynchronously without blocking polling
+            startSpamForThread(t, delaySec).catch(err => {
+              console.error('Worker start failed:', err && err.message ? err.message : err);
+            });
+          } else if (stopMatch) {
+            stopSpamForThreadId(tid);
+          } else {
+            // Not a command - ignore
+          }
+        }
+
+        // update lastSeenText
+        lastSeenText.set(tid, last);
+      }
+    } catch (e) {
+      console.warn('⚠️ Polling error:', e && e.message ? e.message : e);
+    }
+
+    // short sleep between polls
+    await Utils.randomDelay(4000, 6000);
+  }
+
+  // graceful shutdown: stop workers
+  for (const [tid, w] of activeWorkers.entries()) w.stop();
+  // give a moment for workers to stop
+  await Utils.randomDelay(300, 800);
   try { await ig.destroy?.(); } catch (_) {}
   process.exit(0);
 }
