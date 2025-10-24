@@ -1,6 +1,10 @@
 // group_spam_loop.js
 // Requires: nodejs-insta-private-api, readline-sync, chalk
 // Usage: node group_spam_loop.js
+//
+// ENGINE: nodejs-insta-private-api
+// FEATURE: Always-read owner.json + update owner.json after session load or login
+// VERSION: 2.0
 
 const fs = require('fs');
 const path = require('path');
@@ -19,7 +23,7 @@ console.log(chalk.bold.red("\n=========================================="));
 console.log(chalk.bold.red("GYOVANNY INSTAGRAM SPAM BOT 🔥"));
 console.log(chalk.bold.red("==========================================\n"));
 
-// ===== Override console.log/warn/error to always show red =====
+// ===== Override console.log/warn/error to always show red-ish output =====
 const originalLog = console.log.bind(console);
 const originalWarn = console.warn.bind(console);
 const originalError = console.error.bind(console);
@@ -33,14 +37,14 @@ console.log = (...args) => {
 };
 console.warn = (...args) => {
   try {
-    originalWarn(chalk.red(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
+    originalWarn(chalk.yellow(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
   } catch {
     originalWarn(args.join(' '));
   }
 };
 console.error = (...args) => {
   try {
-    originalError(chalk.red(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
+    originalError(chalk.redBright(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
   } catch {
     originalError(args.join(' '));
   }
@@ -70,7 +74,7 @@ async function saveSessionSafe(ig) {
     }
     console.warn('⚠️ Could not find save session function on client.');
   } catch (e) {
-    console.warn('⚠️ Could not save session:', e.message || e);
+    console.warn('⚠️ Could not save session:', e && (e.message || e));
   }
 }
 
@@ -115,12 +119,15 @@ async function loadSessionIfExists(ig) {
       const ok = await ig.tryLoadSessionFileIfExists(SESSION_FILE);
       if (ok) {
         console.log(`✅ Loaded existing session (client.tryLoadSessionFileIfExists) -> ${SESSION_FILE}`);
+        // After loading session, attempt to confirm the current authenticated user and persist owner
+        await persistOwnerFromCurrentUser(ig).catch(() => {});
         return true;
       }
       // try backup
       const okb = await ig.tryLoadSessionFileIfExists(SESSION_BACKUP);
       if (okb) {
         console.log(`✅ Loaded existing session from backup (client.tryLoadSessionFileIfExists) -> ${SESSION_BACKUP}`);
+        await persistOwnerFromCurrentUser(ig).catch(() => {});
         return true;
       }
       // fallthrough to manual tries
@@ -140,6 +147,7 @@ async function loadSessionIfExists(ig) {
           try {
             if (await ig.isSessionValid()) {
               console.log(`✅ Loaded existing session (client.loadSessionFromFile): ${SESSION_FILE}`);
+              await persistOwnerFromCurrentUser(ig).catch(() => {});
               return true;
             } else {
               console.warn(`⚠️ Saved session in ${SESSION_FILE} is not valid.`);
@@ -149,6 +157,7 @@ async function loadSessionIfExists(ig) {
           }
         } else {
           console.log(`✅ Loaded session object via client.loadSessionFromFile: ${SESSION_FILE}`);
+          await persistOwnerFromCurrentUser(ig).catch(() => {});
           return true;
         }
       }
@@ -173,6 +182,7 @@ async function loadSessionIfExists(ig) {
             const valid = await ig.isSessionValid();
             if (valid) {
               console.log(`✅ Loaded existing session from ${p} (via ig.loadSession)`);
+              await persistOwnerFromCurrentUser(ig).catch(() => {});
               return true;
             } else {
               console.warn(`⚠️ Saved session in ${p} is not valid.`);
@@ -180,6 +190,7 @@ async function loadSessionIfExists(ig) {
             }
           } else {
             console.log(`✅ Loaded existing session from ${p} (via ig.loadSession, no validation available)`);
+            await persistOwnerFromCurrentUser(ig).catch(() => {});
             return true;
           }
         } catch (e) {
@@ -212,6 +223,10 @@ async function doLogin(ig, username, password) {
     await ig.login({ username, password });
     console.log('✅ Logged in successfully!');
     await saveSessionSafe(ig);
+    // Persist owner info for the logged-in account
+    await persistOwnerFromCurrentUser(ig).catch((e) => {
+      console.warn('⚠️ Could not persist owner after login:', e && e.message ? e.message : e);
+    });
     return true;
   } catch (err) {
     // Handle 2FA
@@ -227,13 +242,17 @@ async function doLogin(ig, username, password) {
         });
         console.log('✅ 2FA login successful!');
         await saveSessionSafe(ig);
+        // Persist owner info after 2FA login
+        await persistOwnerFromCurrentUser(ig).catch((e) => {
+          console.warn('⚠️ Could not persist owner after 2FA login:', e && e.message ? e.message : e);
+        });
         return true;
       } catch (twoErr) {
-        console.error('❌ 2FA login failed:', twoErr.message || twoErr);
+        console.error('❌ 2FA login failed:', twoErr && (twoErr.message || twoErr));
         return false;
       }
     } else {
-      console.error('❌ Login error:', err.name ? `${err.name}: ${err.message}` : err);
+      console.error('❌ Login error:', err && (err.name ? `${err.name}: ${err.message}` : err));
       return false;
     }
   }
@@ -281,6 +300,9 @@ function loadOwnerFile() {
 
 function saveOwnerFile(owner) {
   try {
+    // ensure normalization
+    if (owner && owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
+    if (owner && owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
     fs.writeFileSync(OWNER_FILE, JSON.stringify(owner, null, 2), { mode: 0o600 });
     console.log(`🔐 Owner saved to ${OWNER_FILE}: ${owner.username || owner.pk}`);
   } catch (e) {
@@ -288,24 +310,28 @@ function saveOwnerFile(owner) {
   }
 }
 
-// When authenticated, set owner to the authenticated account and persist (overwrites previous owner.json)
-async function setOwnerFromAuthenticatedUser(ig) {
+// After loading a session or after login - fetch current user and persist to owner.json
+async function persistOwnerFromCurrentUser(ig) {
   try {
-    if (ig.account && typeof ig.account.currentUser === 'function') {
-      const me = await ig.account.currentUser();
-      const pk = me.pk ? String(me.pk) : (me.id ? String(me.id) : null);
-      const username = me.username ? String(me.username) : null;
-      const owner = { pk: pk ? digitsOnly(pk) || pk : null, username: username ? String(username).toLowerCase().replace(/^@/, '').trim() : null };
-      if (owner.pk || owner.username) {
-        saveOwnerFile(owner);
-        console.log(`🔁 Owner set from authenticated user -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
-        return owner;
-      }
+    if (!ig || !ig.account || typeof ig.account.currentUser !== 'function') {
+      // cannot fetch currentUser
+      return null;
     }
+    const me = await ig.account.currentUser();
+    if (!me) return null;
+    const owner = {
+      pk: me.pk ? String(me.pk) : (me.id ? String(me.id) : null),
+      username: me.username ? String(me.username).toLowerCase() : null,
+      full_name: me.full_name || me.fullName || null,
+      saved_at: new Date().toISOString()
+    };
+    if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
+    saveOwnerFile(owner);
+    return owner;
   } catch (e) {
-    console.warn('⚠️ Failed to set owner from authenticated user:', e && e.message ? e.message : e);
+    console.warn('⚠️ persistOwnerFromCurrentUser failed:', e && e.message ? e.message : e);
+    return null;
   }
-  return null;
 }
 
 // New helper: robust send that attempts several possible send methods to support DM and Group threads
@@ -475,15 +501,11 @@ function digitsOnly(s) {
 }
 
 // Compare detected sender with owner info
-// Modified to be more permissive/robust and to allow partial numeric suffix matches
+// Uses owner (pk/username) and overrideOwnerUsernames array
 function isSenderOwner(senderObj, owner, overrideOwnerUsernames) {
-  // senderObj: { username: string|null, pk: string|null }
-  // owner: { pk: string|null, username: string|null }
-  // overrideOwnerUsernames: array|null
   try {
     if (!senderObj) return false;
 
-    // Normalize sender fields
     const senderUsername = senderObj.username ? String(senderObj.username).toLowerCase().replace(/^@/, '').trim() : null;
     const senderPkDigits = senderObj.pk ? digitsOnly(senderObj.pk) : null;
 
@@ -492,12 +514,10 @@ function isSenderOwner(senderObj, owner, overrideOwnerUsernames) {
       if (senderUsername) {
         if (overrideOwnerUsernames.includes(senderUsername)) return true;
       }
-      // Also allow override entries that are numeric IDs - compare digits
       if (senderPkDigits) {
         for (const v of overrideOwnerUsernames) {
           const vDigits = digitsOnly(v);
           if (vDigits && vDigits === senderPkDigits) return true;
-          // allow suffix match if one side shorter (defensive)
           if (vDigits && senderPkDigits.endsWith(vDigits)) return true;
           if (vDigits && vDigits.endsWith(senderPkDigits)) return true;
         }
@@ -508,32 +528,26 @@ function isSenderOwner(senderObj, owner, overrideOwnerUsernames) {
     const ownerPkDigits = owner && owner.pk ? digitsOnly(owner.pk) : null;
     const ownerUsername = owner && owner.username ? String(owner.username).toLowerCase().replace(/^@/, '').trim() : null;
 
-    // If both PKs present, prefer direct equality
     if (senderPkDigits && ownerPkDigits) {
       if (senderPkDigits === ownerPkDigits) return true;
-      // Accept if one is suffix of the other (sometimes session stores extra prefixes)
       if (senderPkDigits.endsWith(ownerPkDigits) || ownerPkDigits.endsWith(senderPkDigits)) return true;
     }
 
-    // If username available on both sides, compare normalized
     if (senderUsername && ownerUsername) {
       if (senderUsername === ownerUsername) return true;
     }
 
-    // If sender has username and owner only has pk, sometimes username contains digits; check numeric content
     if (senderUsername && ownerPkDigits) {
       const numericInSender = digitsOnly(senderUsername);
       if (numericInSender && numericInSender === ownerPkDigits) return true;
     }
 
-    // As last resort, if owner.pk missing but ownerUsername available, check if sender.pk or username contains ownerUsername
     if (!ownerPkDigits && ownerUsername) {
       if (senderPkDigits && String(senderPkDigits).includes(ownerUsername)) return true;
       if (senderUsername && senderUsername.includes(ownerUsername)) return true;
     }
 
     return false;
-
   } catch (e) {
     return false;
   }
@@ -548,8 +562,6 @@ function loadOwnerFromSessionFile() {
     if (!raw || !raw.trim()) return owner;
     const s = JSON.parse(raw);
 
-    // check common fields
-    // Many session shapes: { username, pk }, { account_id, user_id, user }, {cookies:...}
     if (s.username) owner.username = String(s.username);
     if (s.pk) owner.pk = String(s.pk);
     if (s.user_id) owner.pk = String(s.user_id);
@@ -559,26 +571,21 @@ function loadOwnerFromSessionFile() {
       if (s.user.id && !owner.pk) owner.pk = String(s.user.id);
     }
     if (!owner.pk && s.account_id) owner.pk = String(s.account_id);
-    // some wrappers store { account: { pk, username } }
     if (s.account && typeof s.account === 'object') {
       if (!owner.pk && (s.account.pk || s.account.id)) owner.pk = String(s.account.pk || s.account.id);
       if (!owner.username && s.account.username) owner.username = String(s.account.username);
     }
-    // sometimes nested under state or module keys
     if (!owner.username && s.state && s.state.username) owner.username = String(s.state.username);
     if (!owner.pk && s.state && s.state.cookieUserId) owner.pk = String(s.state.cookieUserId);
     if (!owner.pk && s.state && s.state.userId) owner.pk = String(s.state.userId);
 
-    // Try searching cookie strings for ds_user_id or similar markers (string cookies)
     if (!owner.pk && s.cookies && typeof s.cookies === 'string') {
-      // try to find ds_user_id or user_id in cookie string
       const m = s.cookies.match(/ds_user_id=(\d+)/);
       if (m && m[1]) owner.pk = String(m[1]);
       const m2 = s.cookies.match(/user_id=(\d+)/);
       if (!owner.pk && m2 && m2[1]) owner.pk = String(m2[1]);
     }
 
-    // Additional fallback: some session shapes include "client" / "config" nested fields
     if (!owner.pk) {
       const findPkInObj = (obj) => {
         if (!obj || typeof obj !== 'object') return null;
@@ -600,9 +607,7 @@ function loadOwnerFromSessionFile() {
       if (extra) owner.pk = extra;
     }
 
-    // lastly, convert numeric-like owner.pk to digits-only string
     if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
-
   } catch (e) {
     // ignore parsing errors
   }
@@ -628,6 +633,21 @@ async function main() {
 
   const ig = new IgApiClient();
 
+  // Try to load persisted owner.json first (this defines who is allowed to issue commands)
+  let owner = { pk: null, username: null };
+  try {
+    const persistedOwner = loadOwnerFile();
+    if (persistedOwner && (persistedOwner.pk || persistedOwner.username)) {
+      owner.pk = persistedOwner.pk || owner.pk;
+      owner.username = persistedOwner.username || owner.username;
+      console.log(`🔁 Loaded owner from owner.json -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
+    } else {
+      console.log('ℹ️ No owner.json found or empty — owner will be set after session load or login.');
+    }
+  } catch (e) {
+    console.warn('⚠️ Could not load owner.json at startup:', e && e.message ? e.message : e);
+  }
+
   // Try load session or login
   let loggedIn = false;
   try {
@@ -643,69 +663,33 @@ async function main() {
       console.error('❌ Could not login. Exiting.');
       process.exit(1);
     }
-  }
-
-  // After successful login / session load, set owner to authenticated user and persist.
-  // This ensures whoever authenticates becomes owner (overwrites previous owner.json).
-  let owner = { pk: null, username: null };
-  try {
-    const setOwner = await setOwnerFromAuthenticatedUser(ig);
-    if (setOwner) {
-      owner = setOwner;
-    }
-  } catch (e) {
-    // ignore - we'll fallback to other sources below
-    console.warn('⚠️ setOwnerFromAuthenticatedUser error:', e && e.message ? e.message : e);
-  }
-
-  // If for some reason above didn't set owner, try to load from session.json (fallback)
-  try {
-    if ((!owner.pk && !owner.username)) {
-      const fromSession = loadOwnerFromSessionFile();
-      if (fromSession && (fromSession.pk || fromSession.username)) {
-        if (fromSession.pk) owner.pk = fromSession.pk;
-        if (fromSession.username) owner.username = fromSession.username;
+  } else {
+    // If session loaded, ensure owner.json is in sync with actual currentUser
+    try {
+      const current = await ig.account.currentUser();
+      if (current) {
+        // update in-memory owner and persisted file to match session's account
+        owner.pk = current.pk ? String(current.pk) : (current.id ? String(current.id) : owner.pk);
+        owner.username = current.username ? String(current.username).toLowerCase() : owner.username;
+        if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
+        if (owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
+        saveOwnerFile(owner);
+        console.log(`🔁 owner.json synchronized with session account -> ${owner.username || owner.pk}`);
       }
+    } catch (e) {
+      console.warn('⚠️ Could not validate currentUser after session load:', e && e.message ? e.message : e);
     }
-  } catch (e) {
-    // ignore
-  }
-
-  // Try to load persisted owner.json (if present and not already set by authenticated user)
-  try {
-    const persisted = loadOwnerFile();
-    if (persisted && (persisted.pk || persisted.username)) {
-      // If owner was set from authenticated user, trust that (it overwrote file).
-      // If owner not set yet, use persisted.
-      if (!owner.pk && !owner.username) {
-        owner.pk = persisted.pk || owner.pk;
-        owner.username = persisted.username || owner.username;
-        console.log(`🔁 Loaded persisted owner from owner.json -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
-      } else {
-        // owner already set (likely from authenticated user) - ensure persisted file matches (it should have been overwritten)
-        // If mismatch, overwrite persisted to match current authenticated owner:
-        if ((owner.pk && persisted.pk !== owner.pk) || (owner.username && persisted.username !== owner.username)) {
-          try { saveOwnerFile(owner); } catch (e) { /* ignore */ }
-          console.log('🔁 Persisted owner did not match authenticated user - owner.json updated.');
-        }
-      }
-    }
-  } catch (e) {
-    // ignore
   }
 
   // normalize owner fields
   if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
   if (owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
 
-  // DEBUG: show resolved owner info so user can verify
-  console.log(`Resolved owner info -> username: ${owner.username || '(unknown)'} , pk: ${owner.pk || '(unknown)'}`);
-
   // Build override list from resolved owner.username if available; otherwise empty array
   let overrideOwnerUsernames = [];
   if (owner.username) overrideOwnerUsernames = [String(owner.username).toLowerCase().replace(/^@/, '').trim()];
 
-  console.log(`Logat ca: ${owner.username || '(unknown)'} ${owner.pk ? (`(id:${owner.pk})`) : ''}`);
+  console.log(`Resolved owner info -> username: ${owner.username || '(unknown)'} , pk: ${owner.pk || '(unknown)'}`);
   console.log(`Override owner usernames (auto): ${JSON.stringify(overrideOwnerUsernames)}`);
 
   // NEW: Ask user if they want /start and /stop commands
@@ -757,7 +741,7 @@ async function main() {
     try {
       inbox = await ig.dm.getInbox();
     } catch (e) {
-      console.error('❌ Failed to fetch inbox:', e.message || e);
+      console.error('❌ Failed to fetch inbox:', e && (e.message || e));
       process.exit(1);
     }
 
@@ -830,7 +814,7 @@ async function main() {
             `Autor: Gyovanny Srg\nOra: ${now.toLocaleTimeString()}\nData: ${now.toLocaleDateString()}\n`
           );
         } catch (sendErr) {
-          console.error(`[${new Date().toLocaleTimeString()}] ❌ Failed to send to ${threadId}:`, sendErr.message || sendErr);
+          console.error(`[${new Date().toLocaleTimeString()}] ❌ Failed to send to ${threadId}:`, sendErr && (sendErr.message || sendErr));
         }
 
         const min = Math.max(200, baseDelay * 1000 - 500);
@@ -883,7 +867,7 @@ async function main() {
         const now = new Date();
         console.log(`[${now.toLocaleTimeString()}] ✅ Sent to ${threadId}: "${toSend}"\nAutor: Gyovanny Srg`);
       } catch (err) {
-        console.error(`[${new Date().toLocaleTimeString()}] ❌ Error sending to ${threadId}:`, err && err.message ? err.message : err);
+        console.error(`[${new Date().toLocaleTimeString()}] ❌ Error sending to ${threadId}:`, err && (err.message || err));
       }
       // wait delaySec +- jitter but allow immediate stop by checking worker.running frequently
       const min = Math.max(200, delaySec * 1000 - 300);
@@ -919,7 +903,7 @@ async function main() {
       lastSeenText.set(tid, last);
     }
   } catch (e) {
-    console.warn('⚠️ Initial inbox fetch failed:', e && e.message ? e.message : e);
+    console.warn('⚠️ Initial inbox fetch failed:', e && (e.message || e));
   }
 
   console.log('✅ Command listener started. Polling for commands every 5 seconds. (Use CTRL+C to exit the whole script)\n');
@@ -949,30 +933,11 @@ async function main() {
           const senderObj = extractLastMessageSender(t); // { username, pk }
           console.log(`[${new Date().toLocaleTimeString()}] [DEBUG] thread=${tid} prev="${prev}" -> last="${last}" sender=${JSON.stringify(senderObj)}`);
 
-          // normalize (trim invisible whitespace)
-          const normalized = String(last || '').trim();
-
-          // More permissive start regex: /start , /startN, /start-N, / startN etc.
-          const startMatch = normalized.match(/\/\s*start(?:[-\s]?(\d+))?/i);
-          const stopMatch = normalized.match(/\/\s*stop\b/i);
-
-          // If owner not set (both pk & username missing), and this message looks like a command,
-          // auto-assign owner to the sender and persist it.
-          if ((!owner.pk && !owner.username) && (startMatch || stopMatch)) {
-            const proposedPk = senderObj.pk ? digitsOnly(senderObj.pk) : null;
-            const proposedUsername = senderObj.username ? String(senderObj.username).toLowerCase().replace(/^@/, '').trim() : null;
-            if (proposedPk || proposedUsername) {
-              owner.pk = proposedPk || null;
-              owner.username = proposedUsername || (proposedPk ? `user_${proposedPk}` : null);
-              if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
-              if (owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
-              // persist
-              saveOwnerFile(owner);
-              // update overrideOwnerUsernames so that subsequent checks use it
-              overrideOwnerUsernames = owner.username ? [owner.username] : [];
-              console.log(`[${new Date().toLocaleTimeString()}] 🔐 Owner automatically set to ${owner.username || owner.pk}`);
-            }
-          }
+          // normalize
+          const normalized = String(last).trim();
+          // check for /startN or /start or /stop
+          const startMatch = normalized.match(/^\/start\s*(\d+)?$/i) || normalized.match(/^\/start(\d+)$/i) || normalized.match(/^\/start-(\d+)$/i);
+          const stopMatch = normalized.match(/^\/stop$/i);
 
           let allowed = false;
           try {
@@ -984,7 +949,6 @@ async function main() {
           if (!allowed) {
             // ignore command from non-owner, but log reason (improved debug)
             const displaySender = (senderObj && (senderObj.username || senderObj.pk)) ? (senderObj.username || senderObj.pk) : 'unknown';
-            // Provide extra debug about owner vs sender for easier diagnosis
             const sPk = senderObj.pk ? digitsOnly(senderObj.pk) : null;
             const oPk = owner.pk ? owner.pk : null;
             const sUser = senderObj.username ? senderObj.username : null;
@@ -993,13 +957,13 @@ async function main() {
           } else {
             // owner issued command
             if (startMatch) {
-              // determine delay (capture group 1)
+              // determine delay
               const n = startMatch[1];
               let delaySec = n ? parseFloat(n) : commandModeConfig.defaultDelaySec;
               if (isNaN(delaySec) || delaySec <= 0) delaySec = Math.max(1, commandModeConfig.defaultDelaySec);
               // start worker for THIS thread
               startSpamForThread(t, delaySec).catch(err => {
-                console.error('Worker start failed:', err && err.message ? err.message : err);
+                console.error('Worker start failed:', err && (err.message || err));
               });
             } else if (stopMatch) {
               stopSpamForThreadId(tid);
@@ -1013,7 +977,7 @@ async function main() {
         lastSeenText.set(tid, last);
       }
     } catch (e) {
-      console.warn('⚠️ Polling error:', e && e.message ? e.message : e);
+      console.warn('⚠️ Polling error:', e && (e.message || e));
     }
 
     // short sleep between polls
@@ -1029,6 +993,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('Fatal error:', err?.message || err);
+  console.error('Fatal error:', err && (err.message || err));
   process.exit(1);
 });
