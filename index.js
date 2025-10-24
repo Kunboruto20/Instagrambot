@@ -288,6 +288,26 @@ function saveOwnerFile(owner) {
   }
 }
 
+// When authenticated, set owner to the authenticated account and persist (overwrites previous owner.json)
+async function setOwnerFromAuthenticatedUser(ig) {
+  try {
+    if (ig.account && typeof ig.account.currentUser === 'function') {
+      const me = await ig.account.currentUser();
+      const pk = me.pk ? String(me.pk) : (me.id ? String(me.id) : null);
+      const username = me.username ? String(me.username) : null;
+      const owner = { pk: pk ? digitsOnly(pk) || pk : null, username: username ? String(username).toLowerCase().replace(/^@/, '').trim() : null };
+      if (owner.pk || owner.username) {
+        saveOwnerFile(owner);
+        console.log(`🔁 Owner set from authenticated user -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
+        return owner;
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ Failed to set owner from authenticated user:', e && e.message ? e.message : e);
+  }
+  return null;
+}
+
 // New helper: robust send that attempts several possible send methods to support DM and Group threads
 async function sendMessageToThread(ig, threadId, message, isGroup) {
   // Attempt several known method signatures in a best-effort order.
@@ -625,38 +645,50 @@ async function main() {
     }
   }
 
-  // Get owner identity (authenticated user) — we'll restrict commands to this user only if present
+  // After successful login / session load, set owner to authenticated user and persist.
+  // This ensures whoever authenticates becomes owner (overwrites previous owner.json).
   let owner = { pk: null, username: null };
   try {
-    if (ig.account && typeof ig.account.currentUser === 'function') {
-      const me = await ig.account.currentUser();
-      owner.pk = me.pk ? String(me.pk) : (me.id ? String(me.id) : owner.pk);
-      owner.username = me.username ? String(me.username) : owner.username;
-    } else if (ig.state && ig.state.cookieUserId) {
-      owner.pk = String(ig.state.cookieUserId);
+    const setOwner = await setOwnerFromAuthenticatedUser(ig);
+    if (setOwner) {
+      owner = setOwner;
     }
   } catch (e) {
-    // ignore
+    // ignore - we'll fallback to other sources below
+    console.warn('⚠️ setOwnerFromAuthenticatedUser error:', e && e.message ? e.message : e);
   }
 
-  // Try to load owner data from session.json as authoritative fallback (and overwrite if found)
+  // If for some reason above didn't set owner, try to load from session.json (fallback)
   try {
-    const fromSession = loadOwnerFromSessionFile();
-    if (fromSession && (fromSession.pk || fromSession.username)) {
-      if (fromSession.pk) owner.pk = fromSession.pk;
-      if (fromSession.username) owner.username = fromSession.username;
+    if ((!owner.pk && !owner.username)) {
+      const fromSession = loadOwnerFromSessionFile();
+      if (fromSession && (fromSession.pk || fromSession.username)) {
+        if (fromSession.pk) owner.pk = fromSession.pk;
+        if (fromSession.username) owner.username = fromSession.username;
+      }
     }
   } catch (e) {
     // ignore
   }
 
-  // Try to load persisted owner.json (this has priority if present)
+  // Try to load persisted owner.json (if present and not already set by authenticated user)
   try {
     const persisted = loadOwnerFile();
     if (persisted && (persisted.pk || persisted.username)) {
-      owner.pk = persisted.pk || owner.pk;
-      owner.username = persisted.username || owner.username;
-      console.log(`🔁 Loaded persisted owner from owner.json -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
+      // If owner was set from authenticated user, trust that (it overwrote file).
+      // If owner not set yet, use persisted.
+      if (!owner.pk && !owner.username) {
+        owner.pk = persisted.pk || owner.pk;
+        owner.username = persisted.username || owner.username;
+        console.log(`🔁 Loaded persisted owner from owner.json -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
+      } else {
+        // owner already set (likely from authenticated user) - ensure persisted file matches (it should have been overwritten)
+        // If mismatch, overwrite persisted to match current authenticated owner:
+        if ((owner.pk && persisted.pk !== owner.pk) || (owner.username && persisted.username !== owner.username)) {
+          try { saveOwnerFile(owner); } catch (e) { /* ignore */ }
+          console.log('🔁 Persisted owner did not match authenticated user - owner.json updated.');
+        }
+      }
     }
   } catch (e) {
     // ignore
@@ -670,7 +702,6 @@ async function main() {
   console.log(`Resolved owner info -> username: ${owner.username || '(unknown)'} , pk: ${owner.pk || '(unknown)'}`);
 
   // Build override list from resolved owner.username if available; otherwise empty array
-  // (This replaces the old interactive prompt to set owner manually.)
   let overrideOwnerUsernames = [];
   if (owner.username) overrideOwnerUsernames = [String(owner.username).toLowerCase().replace(/^@/, '').trim()];
 
@@ -926,7 +957,7 @@ async function main() {
           const stopMatch = normalized.match(/\/\s*stop\b/i);
 
           // If owner not set (both pk & username missing), and this message looks like a command,
-          // auto-assign owner to the sender and persist it — then allow processing immediately.
+          // auto-assign owner to the sender and persist it.
           if ((!owner.pk && !owner.username) && (startMatch || stopMatch)) {
             const proposedPk = senderObj.pk ? digitsOnly(senderObj.pk) : null;
             const proposedUsername = senderObj.username ? String(senderObj.username).toLowerCase().replace(/^@/, '').trim() : null;
@@ -936,17 +967,13 @@ async function main() {
               if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
               if (owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
               // persist
-              try { saveOwnerFile(owner); } catch (e) { console.warn('⚠️ saveOwnerFile failed:', e && e.message ? e.message : e); }
+              saveOwnerFile(owner);
               // update overrideOwnerUsernames so that subsequent checks use it
               overrideOwnerUsernames = owner.username ? [owner.username] : [];
               console.log(`[${new Date().toLocaleTimeString()}] 🔐 Owner automatically set to ${owner.username || owner.pk}`);
-            } else {
-              // cannot set owner because sender has no usable id
-              console.log(`[${new Date().toLocaleTimeString()}] ⚠️ Command detected but sender has no pk/username to set as owner.`);
             }
           }
 
-          // If owner was just set and sender is that owner, allow immediately.
           let allowed = false;
           try {
             allowed = isSenderOwner(senderObj, owner, overrideOwnerUsernames);
