@@ -12,6 +12,7 @@ const Utils = require('nodejs-insta-private-api/dist/utils');
 
 const SESSION_FILE = path.resolve(process.cwd(), 'session.json');
 const SESSION_BACKUP = path.resolve(process.cwd(), 'session_backup.json');
+const OWNER_FILE = path.resolve(process.cwd(), 'owner.json'); // persisted owner info
 
 // ===== Banner =====
 console.log(chalk.bold.red("\n=========================================="));
@@ -19,12 +20,31 @@ console.log(chalk.bold.red("GYOVANNY INSTAGRAM SPAM BOT 🔥"));
 console.log(chalk.bold.red("==========================================\n"));
 
 // ===== Override console.log/warn/error to always show red =====
-const originalLog = console.log;
-console.log = (...args) => originalLog(chalk.red(args.join(' ')));
-const originalWarn = console.warn;
-console.warn = (...args) => originalWarn(chalk.red(args.join(' ')));
-const originalError = console.error;
-console.error = (...args) => originalError(chalk.red(args.join(' ')));
+const originalLog = console.log.bind(console);
+const originalWarn = console.warn.bind(console);
+const originalError = console.error.bind(console);
+
+console.log = (...args) => {
+  try {
+    originalLog(chalk.red(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
+  } catch {
+    originalLog(args.join(' '));
+  }
+};
+console.warn = (...args) => {
+  try {
+    originalWarn(chalk.red(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
+  } catch {
+    originalWarn(args.join(' '));
+  }
+};
+console.error = (...args) => {
+  try {
+    originalError(chalk.red(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
+  } catch {
+    originalError(args.join(' '));
+  }
+};
 
 async function promptCredentials() {
   const username = readline.question(chalk.red('Enter your Instagram username: '));
@@ -41,10 +61,14 @@ async function saveSessionSafe(ig) {
       return;
     }
     // Fallback: use ig.saveSession() and write to disk
-    const session = await ig.saveSession();
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
-    try { fs.writeFileSync(SESSION_BACKUP, JSON.stringify(session, null, 2), { mode: 0o600 }); } catch (_) {}
-    console.log('🔐 Session saved successfully.');
+    if (typeof ig.saveSession === 'function') {
+      const session = await ig.saveSession();
+      fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
+      try { fs.writeFileSync(SESSION_BACKUP, JSON.stringify(session, null, 2), { mode: 0o600 }); } catch (_) {}
+      console.log('🔐 Session saved successfully.');
+      return;
+    }
+    console.warn('⚠️ Could not find save session function on client.');
   } catch (e) {
     console.warn('⚠️ Could not save session:', e.message || e);
   }
@@ -66,7 +90,6 @@ function inspectSessionObject(obj) {
       }
     } catch (e) { /* ignore */ }
   } else if (cookieType === 'object' && cookies !== null) {
-    // object form (cookie jar object)
     try {
       const arr = Array.isArray(cookies.cookies) ? cookies.cookies : (cookies.cookies || []);
       cookieCount = arr.length;
@@ -169,7 +192,7 @@ async function loadSessionIfExists(ig) {
       const info = inspectSessionObject(sessionObj);
       console.log('Top-level keys in session.json:', info.topLevelKeys || Object.keys(sessionObj));
       console.log('Type of "cookies" property:', info.cookiesType);
-      console.log('→ cookies is', info.cookiesType === 'string' ? 'string (prob serialized)':'object');
+      console.log('→ cookies is', info.cookiesType === 'string' ? 'string (prob serialized)' : 'object');
       console.log('   cookies count:', info.cookieCount);
       console.log('   cookie keys (first 20):', info.cookieKeys);
       console.log('authorization present?', info.hasAuthorization);
@@ -177,7 +200,7 @@ async function loadSessionIfExists(ig) {
       console.log('passwordEncryptionKeyId present?', info.passwordEncryptionKeyId);
       console.warn(`⚠️ Saved session in ${p} is not valid.`);
     } catch (e) {
-      console.warn(`⚠️ Failed to load session from ${p}:`, e && e.message ? e.message : e);
+      console.warn('⚠️ Failed to load session from', p, ':', e && e.message ? e.message : e);
     }
   }
 
@@ -236,6 +259,33 @@ function loadMessagesFromFile(filePath) {
   const lines = txt.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   if (lines.length === 0) throw new Error('No messages in file');
   return { lines, fullText: txt };
+}
+
+// Owner file helpers
+function loadOwnerFile() {
+  try {
+    if (!fs.existsSync(OWNER_FILE)) return null;
+    const raw = fs.readFileSync(OWNER_FILE, 'utf8');
+    if (!raw || !raw.trim()) return null;
+    const o = JSON.parse(raw);
+    if (!o) return null;
+    // normalize
+    if (o.pk) o.pk = digitsOnly(o.pk) || o.pk;
+    if (o.username) o.username = String(o.username).toLowerCase().replace(/^@/, '').trim();
+    return o;
+  } catch (e) {
+    console.warn('⚠️ Failed to read owner file:', e && e.message ? e.message : e);
+    return null;
+  }
+}
+
+function saveOwnerFile(owner) {
+  try {
+    fs.writeFileSync(OWNER_FILE, JSON.stringify(owner, null, 2), { mode: 0o600 });
+    console.log(`🔐 Owner saved to ${OWNER_FILE}: ${owner.username || owner.pk}`);
+  } catch (e) {
+    console.warn('⚠️ Failed to save owner file:', e && e.message ? e.message : e);
+  }
 }
 
 // New helper: robust send that attempts several possible send methods to support DM and Group threads
@@ -341,29 +391,202 @@ function extractLastMessageText(thread) {
   return null;
 }
 
-// Helper: extract last message sender (username or pk) from thread object
+// Helper: extract last message sender robustly from thread object
+// Returns an object: { username: string|null, pk: string|null }
 function extractLastMessageSender(thread) {
   try {
-    if (thread.last_permanent_item && thread.last_permanent_item.user_id) return String(thread.last_permanent_item.user_id);
-    if (thread.last_permanent_item && thread.last_permanent_item.user && (thread.last_permanent_item.user.username || thread.last_permanent_item.user.pk)) {
-      return thread.last_permanent_item.user.username || String(thread.last_permanent_item.user.pk);
+    // last_permanent_item often used
+    if (thread.last_permanent_item) {
+      const l = thread.last_permanent_item;
+      if (l.user && (l.user.username || l.user.pk)) {
+        return { username: l.user.username || null, pk: l.user.pk ? String(l.user.pk) : (l.user.id ? String(l.user.id) : null) };
+      }
+      if (l.user_id) return { username: null, pk: String(l.user_id) };
     }
 
+    // thread.items shape
     if (thread.items && Array.isArray(thread.items) && thread.items.length > 0) {
       const it = thread.items[0];
-      if (it.user_id) return String(it.user_id);
-      if (it.user && (it.user.username || it.user.pk)) return it.user.username || String(it.user.pk);
-      if (it.message && it.message.user_id) return String(it.message.user_id);
-      if (it.account && (it.account.username || it.account.pk)) return it.account.username || String(it.account.pk);
+      if (it.user) {
+        return { username: it.user.username || null, pk: it.user.pk ? String(it.user.pk) : (it.user.id ? String(it.user.id) : null) };
+      }
+      if (it.account) {
+        return { username: it.account.username || null, pk: it.account.pk ? String(it.account.pk) : (it.account.id ? String(it.account.id) : null) };
+      }
+      if (it.message && it.message.user_id) {
+        return { username: null, pk: String(it.message.user_id) };
+      }
+      if (it.user_id) return { username: null, pk: String(it.user_id) };
+      // sometimes text items include username
+      if (it.text && it.user && it.user.username) return { username: it.user.username, pk: it.user.pk ? String(it.user.pk) : null };
     }
 
-    if (thread.thread && thread.thread.last_message && thread.thread.last_message.user_id) return String(thread.thread.last_message.user_id);
-    if (thread.last_message && thread.last_message.user_id) return String(thread.last_message.user_id);
-    if (thread.last_message && thread.last_message.user && (thread.last_message.user.username || thread.last_message.user.pk)) {
-      return thread.last_message.user.username || String(thread.last_message.user.pk);
+    // thread.thread.last_message
+    if (thread.thread && thread.thread.last_message) {
+      const lm = thread.thread.last_message;
+      if (lm.user && (lm.user.username || lm.user.pk)) {
+        return { username: lm.user.username || null, pk: lm.user.pk ? String(lm.user.pk) : (lm.user.id ? String(lm.user.id) : null) };
+      }
+      if (lm.user_id) return { username: null, pk: String(lm.user_id) };
+      if (lm.username) return { username: lm.username, pk: null };
     }
+
+    // last_message root
+    if (thread.last_message) {
+      if (typeof thread.last_message === 'string') {
+        return { username: null, pk: null };
+      }
+      if (thread.last_message.user && (thread.last_message.user.username || thread.last_message.user.pk)) {
+        return { username: thread.last_message.user.username || null, pk: thread.last_message.user.pk ? String(thread.last_message.user.pk) : null };
+      }
+      if (thread.last_message.user_id) return { username: null, pk: String(thread.last_message.user_id) };
+    }
+
   } catch (e) { /* ignore */ }
-  return null;
+  return { username: null, pk: null };
+}
+
+// Normalize helper: keep only digits for numeric ids
+function digitsOnly(s) {
+  if (!s) return null;
+  const m = String(s).match(/\d+/g);
+  if (!m) return null;
+  return m.join('');
+}
+
+// Compare detected sender with owner info
+// Modified to be more permissive/robust and to allow partial numeric suffix matches
+function isSenderOwner(senderObj, owner, overrideOwnerUsernames) {
+  // senderObj: { username: string|null, pk: string|null }
+  // owner: { pk: string|null, username: string|null }
+  // overrideOwnerUsernames: array|null
+  try {
+    if (!senderObj) return false;
+
+    // Normalize sender fields
+    const senderUsername = senderObj.username ? String(senderObj.username).toLowerCase().replace(/^@/, '').trim() : null;
+    const senderPkDigits = senderObj.pk ? digitsOnly(senderObj.pk) : null;
+
+    // 1) If override list provided, check username against it first (exact match)
+    if (Array.isArray(overrideOwnerUsernames) && overrideOwnerUsernames.length > 0) {
+      if (senderUsername) {
+        if (overrideOwnerUsernames.includes(senderUsername)) return true;
+      }
+      // Also allow override entries that are numeric IDs - compare digits
+      if (senderPkDigits) {
+        for (const v of overrideOwnerUsernames) {
+          const vDigits = digitsOnly(v);
+          if (vDigits && vDigits === senderPkDigits) return true;
+          // allow suffix match if one side shorter (defensive)
+          if (vDigits && senderPkDigits.endsWith(vDigits)) return true;
+          if (vDigits && vDigits.endsWith(senderPkDigits)) return true;
+        }
+      }
+    }
+
+    // 2) Fallback to owner object check
+    const ownerPkDigits = owner && owner.pk ? digitsOnly(owner.pk) : null;
+    const ownerUsername = owner && owner.username ? String(owner.username).toLowerCase().replace(/^@/, '').trim() : null;
+
+    // If both PKs present, prefer direct equality
+    if (senderPkDigits && ownerPkDigits) {
+      if (senderPkDigits === ownerPkDigits) return true;
+      // Accept if one is suffix of the other (sometimes session stores extra prefixes)
+      if (senderPkDigits.endsWith(ownerPkDigits) || ownerPkDigits.endsWith(senderPkDigits)) return true;
+    }
+
+    // If username available on both sides, compare normalized
+    if (senderUsername && ownerUsername) {
+      if (senderUsername === ownerUsername) return true;
+    }
+
+    // If sender has username and owner only has pk, sometimes username contains digits; check numeric content
+    if (senderUsername && ownerPkDigits) {
+      const numericInSender = digitsOnly(senderUsername);
+      if (numericInSender && numericInSender === ownerPkDigits) return true;
+    }
+
+    // As last resort, if owner.pk missing but ownerUsername available, check if sender.pk or username contains ownerUsername
+    if (!ownerPkDigits && ownerUsername) {
+      if (senderPkDigits && String(senderPkDigits).includes(ownerUsername)) return true;
+      if (senderUsername && senderUsername.includes(ownerUsername)) return true;
+    }
+
+    return false;
+
+  } catch (e) {
+    return false;
+  }
+}
+
+// Helper: try to get owner info from session.json file (robust)
+function loadOwnerFromSessionFile() {
+  const owner = { pk: null, username: null };
+  try {
+    if (!fs.existsSync(SESSION_FILE)) return owner;
+    const raw = fs.readFileSync(SESSION_FILE, 'utf8');
+    if (!raw || !raw.trim()) return owner;
+    const s = JSON.parse(raw);
+
+    // check common fields
+    // Many session shapes: { username, pk }, { account_id, user_id, user }, {cookies:...}
+    if (s.username) owner.username = String(s.username);
+    if (s.pk) owner.pk = String(s.pk);
+    if (s.user_id) owner.pk = String(s.user_id);
+    if (s.user && typeof s.user === 'object') {
+      if (s.user.pk) owner.pk = String(s.user.pk);
+      if (s.user.username) owner.username = String(s.user.username);
+      if (s.user.id && !owner.pk) owner.pk = String(s.user.id);
+    }
+    if (!owner.pk && s.account_id) owner.pk = String(s.account_id);
+    // some wrappers store { account: { pk, username } }
+    if (s.account && typeof s.account === 'object') {
+      if (!owner.pk && (s.account.pk || s.account.id)) owner.pk = String(s.account.pk || s.account.id);
+      if (!owner.username && s.account.username) owner.username = String(s.account.username);
+    }
+    // sometimes nested under state or module keys
+    if (!owner.username && s.state && s.state.username) owner.username = String(s.state.username);
+    if (!owner.pk && s.state && s.state.cookieUserId) owner.pk = String(s.state.cookieUserId);
+    if (!owner.pk && s.state && s.state.userId) owner.pk = String(s.state.userId);
+
+    // Try searching cookie strings for ds_user_id or similar markers (string cookies)
+    if (!owner.pk && s.cookies && typeof s.cookies === 'string') {
+      // try to find ds_user_id or user_id in cookie string
+      const m = s.cookies.match(/ds_user_id=(\d+)/);
+      if (m && m[1]) owner.pk = String(m[1]);
+      const m2 = s.cookies.match(/user_id=(\d+)/);
+      if (!owner.pk && m2 && m2[1]) owner.pk = String(m2[1]);
+    }
+
+    // Additional fallback: some session shapes include "client" / "config" nested fields
+    if (!owner.pk) {
+      const findPkInObj = (obj) => {
+        if (!obj || typeof obj !== 'object') return null;
+        if (obj.pk) return String(obj.pk);
+        if (obj.user_id) return String(obj.user_id);
+        if (obj.id) return String(obj.id);
+        for (const k of Object.keys(obj)) {
+          try {
+            const v = obj[k];
+            if (v && typeof v === 'object') {
+              const r = findPkInObj(v);
+              if (r) return r;
+            }
+          } catch (e) { /* ignore */ }
+        }
+        return null;
+      };
+      const extra = findPkInObj(s);
+      if (extra) owner.pk = extra;
+    }
+
+    // lastly, convert numeric-like owner.pk to digits-only string
+    if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
+
+  } catch (e) {
+    // ignore parsing errors
+  }
+  return owner;
 }
 
 // sleep with abortable check: checks every tickMs ms if worker still running
@@ -402,7 +625,7 @@ async function main() {
     }
   }
 
-  // Get owner identity (authenticated user) — we'll restrict commands to this user only
+  // Get owner identity (authenticated user) — we'll restrict commands to this user only if present
   let owner = { pk: null, username: null };
   try {
     if (ig.account && typeof ig.account.currentUser === 'function') {
@@ -412,19 +635,47 @@ async function main() {
     } else if (ig.state && ig.state.cookieUserId) {
       owner.pk = String(ig.state.cookieUserId);
     }
-    // fallback: try to read session file to infer username if present (best-effort)
-    if ((!owner.pk || !owner.username) && fs.existsSync(SESSION_FILE)) {
-      try {
-        const raw = fs.readFileSync(SESSION_FILE, 'utf8');
-        const s = JSON.parse(raw);
-        if (!owner.username && s.username) owner.username = String(s.username);
-        if (!owner.pk && s.pk) owner.pk = String(s.pk);
-      } catch (_) { /* ignore */ }
+  } catch (e) {
+    // ignore
+  }
+
+  // Try to load owner data from session.json as authoritative fallback (and overwrite if found)
+  try {
+    const fromSession = loadOwnerFromSessionFile();
+    if (fromSession && (fromSession.pk || fromSession.username)) {
+      if (fromSession.pk) owner.pk = fromSession.pk;
+      if (fromSession.username) owner.username = fromSession.username;
     }
   } catch (e) {
-    console.warn('⚠️ Could not fetch owner info:', e && e.message ? e.message : e);
+    // ignore
   }
-  console.log(`Logat ca: ${owner.username || '(unknown)'} ${owner.pk ? `(id:${owner.pk})` : ''}`);
+
+  // Try to load persisted owner.json (this has priority if present)
+  try {
+    const persisted = loadOwnerFile();
+    if (persisted && (persisted.pk || persisted.username)) {
+      owner.pk = persisted.pk || owner.pk;
+      owner.username = persisted.username || owner.username;
+      console.log(`🔁 Loaded persisted owner from owner.json -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // normalize owner fields
+  if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
+  if (owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
+
+  // DEBUG: show resolved owner info so user can verify
+  console.log(`Resolved owner info -> username: ${owner.username || '(unknown)'} , pk: ${owner.pk || '(unknown)'}`);
+
+  // Build override list from resolved owner.username if available; otherwise empty array
+  // (This replaces the old interactive prompt to set owner manually.)
+  let overrideOwnerUsernames = [];
+  if (owner.username) overrideOwnerUsernames = [String(owner.username).toLowerCase().replace(/^@/, '').trim()];
+
+  console.log(`Logat ca: ${owner.username || '(unknown)'} ${owner.pk ? (`(id:${owner.pk})`) : ''}`);
+  console.log(`Override owner usernames (auto): ${JSON.stringify(overrideOwnerUsernames)}`);
 
   // NEW: Ask user if they want /start and /stop commands
   console.log('\nVrei comenzi de /start și /stop?');
@@ -451,6 +702,8 @@ async function main() {
     const delaySecInput = readline.question(chalk.red('Enter default delay seconds between sends (used only if /start has no number): ')).trim();
     let baseDelay = parseFloat(delaySecInput);
     if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
+    // enforce minimum 1s to avoid instant loops
+    baseDelay = Math.max(1, baseDelay);
     console.log(chalk.red('\nCommand mode enabled. Send /startN (e.g. /start1, /start5) inside ANY conversation to start spam there with N seconds delay. Send /stop to stop in that conversation.\n'));
     commandModeConfig = {
       spamType: spamType === '2' ? 'full' : 'line',
@@ -506,6 +759,7 @@ async function main() {
     const delaySecInput = readline.question(chalk.red('Enter delay seconds between sends (per-message base, can be fractional): ')).trim();
     let baseDelay = parseFloat(delaySecInput);
     if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
+    baseDelay = Math.max(0.2, baseDelay); // allow fractional but not zero
     console.log(`\n▶️ Will send messages in a loop with base delay ${baseDelay}s (uses jitter). Press CTRL+C to stop.\n`);
 
     let running = true;
@@ -563,11 +817,10 @@ async function main() {
   // -------------------------
   // COMMAND MODE (polling + per-thread control)
   // -------------------------
-  // We'll poll the inbox periodically to detect /startN and /stop commands inside any conversation.
-  // When /startN is seen in a thread, we launch an async worker that sends messages in loop to THAT thread
-  // with delay N seconds (if N absent, use defaultDelaySec).
-  // When /stop is seen in that thread, we stop the worker for that thread.
-  // This implementation uses polling; it tries to be robust across different inbox shapes.
+  if (!commandModeConfig) {
+    console.error('❌ Command mode config missing. Exiting.');
+    process.exit(1);
+  }
 
   // state maps
   const lastSeenText = new Map(); // threadId -> last seen message text (to detect new commands)
@@ -661,33 +914,62 @@ async function main() {
 
         // if changed and not empty, inspect for commands
         if (last && last !== prev) {
-          // normalize
-          const normalized = String(last).trim();
-          // check for /startN or /start or /stop
-          const startMatch = normalized.match(/^\/start\s*(\d+)?$/i) || normalized.match(/^\/start(\d+)$/i) || normalized.match(/^\/start-(\d+)$/i);
-          const stopMatch = normalized.match(/^\/stop$/i);
+          // debug: show what changed
+          const senderObj = extractLastMessageSender(t); // { username, pk }
+          console.log(`[${new Date().toLocaleTimeString()}] [DEBUG] thread=${tid} prev="${prev}" -> last="${last}" sender=${JSON.stringify(senderObj)}`);
 
-          // Only allow commands from the authenticated owner
-          const sender = extractLastMessageSender(t);
+          // normalize (trim invisible whitespace)
+          const normalized = String(last || '').trim();
+
+          // More permissive start regex: /start , /startN, /start-N, / startN etc.
+          const startMatch = normalized.match(/\/\s*start(?:[-\s]?(\d+))?/i);
+          const stopMatch = normalized.match(/\/\s*stop\b/i);
+
+          // If owner not set (both pk & username missing), and this message looks like a command,
+          // auto-assign owner to the sender and persist it — then allow processing immediately.
+          if ((!owner.pk && !owner.username) && (startMatch || stopMatch)) {
+            const proposedPk = senderObj.pk ? digitsOnly(senderObj.pk) : null;
+            const proposedUsername = senderObj.username ? String(senderObj.username).toLowerCase().replace(/^@/, '').trim() : null;
+            if (proposedPk || proposedUsername) {
+              owner.pk = proposedPk || null;
+              owner.username = proposedUsername || (proposedPk ? `user_${proposedPk}` : null);
+              if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
+              if (owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
+              // persist
+              try { saveOwnerFile(owner); } catch (e) { console.warn('⚠️ saveOwnerFile failed:', e && e.message ? e.message : e); }
+              // update overrideOwnerUsernames so that subsequent checks use it
+              overrideOwnerUsernames = owner.username ? [owner.username] : [];
+              console.log(`[${new Date().toLocaleTimeString()}] 🔐 Owner automatically set to ${owner.username || owner.pk}`);
+            } else {
+              // cannot set owner because sender has no usable id
+              console.log(`[${new Date().toLocaleTimeString()}] ⚠️ Command detected but sender has no pk/username to set as owner.`);
+            }
+          }
+
+          // If owner was just set and sender is that owner, allow immediately.
           let allowed = false;
-          if (sender) {
-            // compare both username and pk if available
-            if (owner.pk && String(owner.pk) === String(sender)) allowed = true;
-            if (owner.username && String(owner.username).toLowerCase() === String(sender).toLowerCase()) allowed = true;
-          } else {
-            // if we can't detect sender, be conservative and disallow
+          try {
+            allowed = isSenderOwner(senderObj, owner, overrideOwnerUsernames);
+          } catch (e) {
             allowed = false;
           }
 
           if (!allowed) {
-            // ignore command from non-owner
-            console.log(`[${new Date().toLocaleTimeString()}] ⚠️ Ignored command in ${tid} from non-owner (${sender || 'unknown'})`);
+            // ignore command from non-owner, but log reason (improved debug)
+            const displaySender = (senderObj && (senderObj.username || senderObj.pk)) ? (senderObj.username || senderObj.pk) : 'unknown';
+            // Provide extra debug about owner vs sender for easier diagnosis
+            const sPk = senderObj.pk ? digitsOnly(senderObj.pk) : null;
+            const oPk = owner.pk ? owner.pk : null;
+            const sUser = senderObj.username ? senderObj.username : null;
+            const oUser = owner.username ? owner.username : null;
+            console.log(`[${new Date().toLocaleTimeString()}] ⚠️ Ignored command in ${tid} from non-owner (${displaySender}). sender.pk=${sPk} sender.username=${sUser} | owner.pk=${oPk} owner.username=${oUser} overrideList=${JSON.stringify(overrideOwnerUsernames)}`);
           } else {
             // owner issued command
             if (startMatch) {
-              // determine delay
+              // determine delay (capture group 1)
               const n = startMatch[1];
-              const delaySec = n ? parseFloat(n) : commandModeConfig.defaultDelaySec;
+              let delaySec = n ? parseFloat(n) : commandModeConfig.defaultDelaySec;
+              if (isNaN(delaySec) || delaySec <= 0) delaySec = Math.max(1, commandModeConfig.defaultDelaySec);
               // start worker for THIS thread
               startSpamForThread(t, delaySec).catch(err => {
                 console.error('Worker start failed:', err && err.message ? err.message : err);
