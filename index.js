@@ -4,7 +4,7 @@
 //
 // ENGINE: nodejs-insta-private-api
 // FEATURE: Always-read owner.json + update owner.json after session load or login
-// VERSION: 2.0
+// VERSION: 2.3 (fix: ensure in-memory owner updated after login/session load + process startup /start)
 
 const fs = require('fs');
 const path = require('path');
@@ -58,13 +58,11 @@ async function promptCredentials() {
 
 async function saveSessionSafe(ig) {
   try {
-    // Prefer client.saveSessionToFile if available
     if (typeof ig.saveSessionToFile === 'function') {
       await ig.saveSessionToFile(SESSION_FILE, SESSION_BACKUP);
       console.log('🔐 Session saved successfully (via client.saveSessionToFile).');
       return;
     }
-    // Fallback: use ig.saveSession() and write to disk
     if (typeof ig.saveSession === 'function') {
       const session = await ig.saveSession();
       fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
@@ -92,13 +90,13 @@ function inspectSessionObject(obj) {
         cookieCount = parsed.cookies.length;
         cookieKeys = parsed.cookies.slice(0, 20).map(c => c.key || c.name || '(?)');
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
   } else if (cookieType === 'object' && cookies !== null) {
     try {
       const arr = Array.isArray(cookies.cookies) ? cookies.cookies : (cookies.cookies || []);
       cookieCount = arr.length;
       cookieKeys = (arr.slice(0, 20)).map(c => c.key || c.name || '(?)');
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
   }
   return {
     ok: true,
@@ -119,30 +117,24 @@ async function loadSessionIfExists(ig) {
       const ok = await ig.tryLoadSessionFileIfExists(SESSION_FILE);
       if (ok) {
         console.log(`✅ Loaded existing session (client.tryLoadSessionFileIfExists) -> ${SESSION_FILE}`);
-        // After loading session, attempt to confirm the current authenticated user and persist owner
         await persistOwnerFromCurrentUser(ig).catch(() => {});
         return true;
       }
-      // try backup
       const okb = await ig.tryLoadSessionFileIfExists(SESSION_BACKUP);
       if (okb) {
         console.log(`✅ Loaded existing session from backup (client.tryLoadSessionFileIfExists) -> ${SESSION_BACKUP}`);
         await persistOwnerFromCurrentUser(ig).catch(() => {});
         return true;
       }
-      // fallthrough to manual tries
     }
   } catch (e) {
-    // ignore and fall through
     if (ig.state && ig.state.verbose) console.warn('[Session] tryLoadSessionFileIfExists error:', e && e.message);
   }
 
-  // 2) If client exposes loadSessionFromFile/loadSessionToFile, prefer those
   try {
     if (typeof ig.loadSessionFromFile === 'function') {
       const ok = await ig.loadSessionFromFile(SESSION_FILE);
       if (ok) {
-        // validate
         if (typeof ig.isSessionValid === 'function') {
           try {
             if (await ig.isSessionValid()) {
@@ -152,9 +144,7 @@ async function loadSessionIfExists(ig) {
             } else {
               console.warn(`⚠️ Saved session in ${SESSION_FILE} is not valid.`);
             }
-          } catch (e) {
-            // if isSessionValid fails, still proceed to manual fallback
-          }
+          } catch (e) {}
         } else {
           console.log(`✅ Loaded session object via client.loadSessionFromFile: ${SESSION_FILE}`);
           await persistOwnerFromCurrentUser(ig).catch(() => {});
@@ -173,11 +163,9 @@ async function loadSessionIfExists(ig) {
     try {
       const raw = fs.readFileSync(p, 'utf8');
       const sessionObj = JSON.parse(raw);
-      // Try client.loadSession(sessionObj) if available
       if (typeof ig.loadSession === 'function') {
         try {
           await ig.loadSession(sessionObj);
-          // validate
           if (typeof ig.isSessionValid === 'function') {
             const valid = await ig.isSessionValid();
             if (valid) {
@@ -186,7 +174,6 @@ async function loadSessionIfExists(ig) {
               return true;
             } else {
               console.warn(`⚠️ Saved session in ${p} is not valid.`);
-              // continue to next candidate
             }
           } else {
             console.log(`✅ Loaded existing session from ${p} (via ig.loadSession, no validation available)`);
@@ -194,12 +181,10 @@ async function loadSessionIfExists(ig) {
             return true;
           }
         } catch (e) {
-          // ig.loadSession failed: try to inspect and continue
           if (ig.state && ig.state.verbose) console.warn('[Session] ig.loadSession failed:', e && e.message);
         }
       }
 
-      // If we reached here, do a best-effort inspect and show diagnostics
       const info = inspectSessionObject(sessionObj);
       console.log('Top-level keys in session.json:', info.topLevelKeys || Object.keys(sessionObj));
       console.log('Type of "cookies" property:', info.cookiesType);
@@ -220,10 +205,24 @@ async function loadSessionIfExists(ig) {
 
 async function doLogin(ig, username, password) {
   try {
-    await ig.login({ username, password });
+    const user = await ig.login({ username, password });
     console.log('✅ Logged in successfully!');
     await saveSessionSafe(ig);
-    // Persist owner info for the logged-in account
+
+    // Persist owner info for the logged-in account (use returned user object if available)
+    try {
+      const owner = {
+        pk: user && (user.pk || user.id) ? String(user.pk || user.id) : null,
+        username: user && user.username ? String(user.username).toLowerCase() : null,
+        full_name: user && (user.full_name || user.fullName) ? (user.full_name || user.fullName) : null,
+        saved_at: new Date().toISOString()
+      };
+      if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
+      if (owner.pk || owner.username) saveOwnerFile(owner);
+    } catch (e) {
+      console.warn('⚠️ Could not persist owner from login return:', e && e.message ? e.message : e);
+    }
+
     await persistOwnerFromCurrentUser(ig).catch((e) => {
       console.warn('⚠️ Could not persist owner after login:', e && e.message ? e.message : e);
     });
@@ -242,7 +241,6 @@ async function doLogin(ig, username, password) {
         });
         console.log('✅ 2FA login successful!');
         await saveSessionSafe(ig);
-        // Persist owner info after 2FA login
         await persistOwnerFromCurrentUser(ig).catch((e) => {
           console.warn('⚠️ Could not persist owner after 2FA login:', e && e.message ? e.message : e);
         });
@@ -288,7 +286,6 @@ function loadOwnerFile() {
     if (!raw || !raw.trim()) return null;
     const o = JSON.parse(raw);
     if (!o) return null;
-    // normalize
     if (o.pk) o.pk = digitsOnly(o.pk) || o.pk;
     if (o.username) o.username = String(o.username).toLowerCase().replace(/^@/, '').trim();
     return o;
@@ -300,11 +297,17 @@ function loadOwnerFile() {
 
 function saveOwnerFile(owner) {
   try {
-    // ensure normalization
-    if (owner && owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
-    if (owner && owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
-    fs.writeFileSync(OWNER_FILE, JSON.stringify(owner, null, 2), { mode: 0o600 });
-    console.log(`🔐 Owner saved to ${OWNER_FILE}: ${owner.username || owner.pk}`);
+    const toSave = {};
+    if (owner && owner.pk) toSave.pk = digitsOnly(owner.pk) || owner.pk;
+    if (owner && owner.username) toSave.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
+    if (owner && owner.full_name) toSave.full_name = owner.full_name;
+    toSave.saved_at = new Date().toISOString();
+    if (!toSave.pk && !toSave.username) {
+      console.warn('⚠️ Owner object has no pk/username — not writing owner.json to avoid nulls.');
+      return;
+    }
+    fs.writeFileSync(OWNER_FILE, JSON.stringify(toSave, null, 2), { mode: 0o600 });
+    console.log(`🔐 Owner saved to ${OWNER_FILE}: ${toSave.username || toSave.pk}`);
   } catch (e) {
     console.warn('⚠️ Failed to save owner file:', e && e.message ? e.message : e);
   }
@@ -313,12 +316,45 @@ function saveOwnerFile(owner) {
 // After loading a session or after login - fetch current user and persist to owner.json
 async function persistOwnerFromCurrentUser(ig) {
   try {
-    if (!ig || !ig.account || typeof ig.account.currentUser !== 'function') {
-      // cannot fetch currentUser
-      return null;
+    let me = null;
+    try {
+      if (ig && ig.account && typeof ig.account.currentUser === 'function') {
+        me = await ig.account.currentUser();
+      } else if (ig && ig.account && ig.account.currentUser && typeof ig.account.currentUser === 'object') {
+        me = ig.account.currentUser;
+      }
+    } catch (e) {
+      me = null;
     }
-    const me = await ig.account.currentUser();
+
+    if (!me && ig && ig.state) {
+      try {
+        me = {};
+        if (ig.state.cookieUserId) me.pk = String(ig.state.cookieUserId);
+        if (ig.state.userId) me.pk = me.pk || String(ig.state.userId);
+        if (ig.state.username) me.username = me.username || String(ig.state.username);
+      } catch (e) { me = null; }
+    }
+
+    if (!me) {
+      try {
+        const ownerFromSession = loadOwnerFromSessionFile();
+        if (ownerFromSession && (ownerFromSession.pk || ownerFromSession.username)) {
+          const owner = {
+            pk: ownerFromSession.pk || null,
+            username: ownerFromSession.username || null,
+            full_name: ownerFromSession.full_name || null,
+            saved_at: new Date().toISOString()
+          };
+          if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
+          if (owner.pk || owner.username) saveOwnerFile(owner);
+          return owner;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     if (!me) return null;
+
     const owner = {
       pk: me.pk ? String(me.pk) : (me.id ? String(me.id) : null),
       username: me.username ? String(me.username).toLowerCase() : null,
@@ -326,7 +362,7 @@ async function persistOwnerFromCurrentUser(ig) {
       saved_at: new Date().toISOString()
     };
     if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
-    saveOwnerFile(owner);
+    if (owner.pk || owner.username) saveOwnerFile(owner);
     return owner;
   } catch (e) {
     console.warn('⚠️ persistOwnerFromCurrentUser failed:', e && e.message ? e.message : e);
@@ -336,11 +372,8 @@ async function persistOwnerFromCurrentUser(ig) {
 
 // New helper: robust send that attempts several possible send methods to support DM and Group threads
 async function sendMessageToThread(ig, threadId, message, isGroup) {
-  // Attempt several known method signatures in a best-effort order.
-  // Wrap each in try/catch and throw at the end if none worked.
   const attempts = [];
 
-  // 1) ig.dm.sendToThread({ threadId, message })
   attempts.push(async () => {
     if (ig.dm && typeof ig.dm.sendToThread === 'function') {
       await ig.dm.sendToThread({ threadId, message });
@@ -349,7 +382,6 @@ async function sendMessageToThread(ig, threadId, message, isGroup) {
     throw new Error('sendToThread not available');
   });
 
-  // 2) ig.dm.send({ threadId, message }) - generic
   attempts.push(async () => {
     if (ig.dm && typeof ig.dm.send === 'function') {
       await ig.dm.send({ threadId, message });
@@ -358,7 +390,6 @@ async function sendMessageToThread(ig, threadId, message, isGroup) {
     throw new Error('dm.send not available');
   });
 
-  // 3) ig.dm.sendToGroup({ threadId, message }) - keep for compatibility with groups
   attempts.push(async () => {
     if (ig.dm && typeof ig.dm.sendToGroup === 'function' && isGroup) {
       await ig.dm.sendToGroup({ threadId, message });
@@ -367,15 +398,12 @@ async function sendMessageToThread(ig, threadId, message, isGroup) {
     throw new Error('sendToGroup not available or not a group');
   });
 
-  // 4) ig.directThread.broadcast(...) variants
   attempts.push(async () => {
     if (ig.directThread && typeof ig.directThread.broadcast === 'function') {
-      // try object form
       try {
         await ig.directThread.broadcast({ threadId, message });
         return;
       } catch (e) {
-        // try alternate signature
         try {
           await ig.directThread.broadcast(threadId, message);
           return;
@@ -387,7 +415,6 @@ async function sendMessageToThread(ig, threadId, message, isGroup) {
     throw new Error('directThread.broadcast not available');
   });
 
-  // 5) As a last resort, try ig.entity.directThread(...) patterns (some libs expose entity helpers)
   attempts.push(async () => {
     try {
       if (typeof ig.entity === 'function' || typeof ig.entity === 'object') {
@@ -401,24 +428,21 @@ async function sendMessageToThread(ig, threadId, message, isGroup) {
     throw new Error('entity.directThread broadcast not available');
   });
 
-  // Execute attempts in order; return on first success
   let lastErr = null;
   for (const fn of attempts) {
     try {
       await fn();
-      return; // success
+      return;
     } catch (e) {
       lastErr = e;
     }
   }
-  // If we get here, no method worked
   throw new Error(`No available send method succeeded for thread ${threadId}: ${lastErr && lastErr.message}`);
 }
 
 // Helper: extract last message text robustly from a thread object
 function extractLastMessageText(thread) {
   try {
-    // common shapes
     if (thread.last_permanent_item && thread.last_permanent_item.text) return thread.last_permanent_item.text;
     if (thread.items && Array.isArray(thread.items) && thread.items.length > 0) {
       const it = thread.items[0];
@@ -438,10 +462,8 @@ function extractLastMessageText(thread) {
 }
 
 // Helper: extract last message sender robustly from thread object
-// Returns an object: { username: string|null, pk: string|null }
 function extractLastMessageSender(thread) {
   try {
-    // last_permanent_item often used
     if (thread.last_permanent_item) {
       const l = thread.last_permanent_item;
       if (l.user && (l.user.username || l.user.pk)) {
@@ -450,7 +472,6 @@ function extractLastMessageSender(thread) {
       if (l.user_id) return { username: null, pk: String(l.user_id) };
     }
 
-    // thread.items shape
     if (thread.items && Array.isArray(thread.items) && thread.items.length > 0) {
       const it = thread.items[0];
       if (it.user) {
@@ -463,11 +484,9 @@ function extractLastMessageSender(thread) {
         return { username: null, pk: String(it.message.user_id) };
       }
       if (it.user_id) return { username: null, pk: String(it.user_id) };
-      // sometimes text items include username
       if (it.text && it.user && it.user.username) return { username: it.user.username, pk: it.user.pk ? String(it.user.pk) : null };
     }
 
-    // thread.thread.last_message
     if (thread.thread && thread.thread.last_message) {
       const lm = thread.thread.last_message;
       if (lm.user && (lm.user.username || lm.user.pk)) {
@@ -477,7 +496,6 @@ function extractLastMessageSender(thread) {
       if (lm.username) return { username: lm.username, pk: null };
     }
 
-    // last_message root
     if (thread.last_message) {
       if (typeof thread.last_message === 'string') {
         return { username: null, pk: null };
@@ -501,15 +519,12 @@ function digitsOnly(s) {
 }
 
 // Compare detected sender with owner info
-// Uses owner (pk/username) and overrideOwnerUsernames array
 function isSenderOwner(senderObj, owner, overrideOwnerUsernames) {
   try {
     if (!senderObj) return false;
-
     const senderUsername = senderObj.username ? String(senderObj.username).toLowerCase().replace(/^@/, '').trim() : null;
     const senderPkDigits = senderObj.pk ? digitsOnly(senderObj.pk) : null;
 
-    // 1) If override list provided, check username against it first (exact match)
     if (Array.isArray(overrideOwnerUsernames) && overrideOwnerUsernames.length > 0) {
       if (senderUsername) {
         if (overrideOwnerUsernames.includes(senderUsername)) return true;
@@ -524,7 +539,6 @@ function isSenderOwner(senderObj, owner, overrideOwnerUsernames) {
       }
     }
 
-    // 2) Fallback to owner object check
     const ownerPkDigits = owner && owner.pk ? digitsOnly(owner.pk) : null;
     const ownerUsername = owner && owner.username ? String(owner.username).toLowerCase().replace(/^@/, '').trim() : null;
 
@@ -608,9 +622,7 @@ function loadOwnerFromSessionFile() {
     }
 
     if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
-  } catch (e) {
-    // ignore parsing errors
-  }
+  } catch (e) {}
   return owner;
 }
 
@@ -625,7 +637,7 @@ async function sleepWithAbort(totalMs, worker, tickMs = 120) {
 
 // Helper: small wrapper to normalize thread id
 function getThreadId(thread) {
-  return thread.thread_id || thread.thread?.thread_id || null;
+  return thread.thread_id || (thread.thread && thread.thread.thread_id) || null;
 }
 
 async function main() {
@@ -663,29 +675,38 @@ async function main() {
       console.error('❌ Could not login. Exiting.');
       process.exit(1);
     }
-  } else {
-    // If session loaded, ensure owner.json is in sync with actual currentUser
-    try {
-      const current = await ig.account.currentUser();
-      if (current) {
-        // update in-memory owner and persisted file to match session's account
-        owner.pk = current.pk ? String(current.pk) : (current.id ? String(current.id) : owner.pk);
-        owner.username = current.username ? String(current.username).toLowerCase() : owner.username;
-        if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
-        if (owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
-        saveOwnerFile(owner);
-        console.log(`🔁 owner.json synchronized with session account -> ${owner.username || owner.pk}`);
-      }
-    } catch (e) {
-      console.warn('⚠️ Could not validate currentUser after session load:', e && e.message ? e.message : e);
-    }
   }
 
-  // normalize owner fields
+  // ==== CRITICAL FIX: after login or session load, ensure in-memory `owner` is set correctly ====
+  try {
+    // 1) Prefer owner.json if present
+    const fileOwner = loadOwnerFile();
+    if (fileOwner && (fileOwner.pk || fileOwner.username)) {
+      owner = fileOwner;
+      console.log(`🔁 owner loaded from file -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
+    } else {
+      // 2) Try to persist & retrieve from client
+      const me = await persistOwnerFromCurrentUser(ig);
+      if (me && (me.pk || me.username)) {
+        owner = me;
+        console.log(`🔁 owner obtained from client -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
+      } else {
+        // 3) As a last resort, try session.json parsing
+        const ownerFromSession = loadOwnerFromSessionFile();
+        if (ownerFromSession && (ownerFromSession.pk || ownerFromSession.username)) {
+          owner = ownerFromSession;
+          console.log(`🔁 owner obtained from session file -> username: ${owner.username || '(unknown)'} pk: ${owner.pk || '(unknown)'}`);
+          if (owner.pk || owner.username) saveOwnerFile(owner);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ Could not resolve owner after login/session load:', e && e.message ? e.message : e);
+  }
+
+  // normalize owner fields and build override list
   if (owner.pk) owner.pk = digitsOnly(owner.pk) || owner.pk;
   if (owner.username) owner.username = String(owner.username).toLowerCase().replace(/^@/, '').trim();
-
-  // Build override list from resolved owner.username if available; otherwise empty array
   let overrideOwnerUsernames = [];
   if (owner.username) overrideOwnerUsernames = [String(owner.username).toLowerCase().replace(/^@/, '').trim()];
 
@@ -713,11 +734,9 @@ async function main() {
       console.error('❌', e.message || e);
       process.exit(1);
     }
-    // Note: baseDelay will be provided in the /startN command (N = seconds). We'll still ask for a fallback default.
     const delaySecInput = readline.question(chalk.red('Enter default delay seconds between sends (used only if /start has no number): ')).trim();
     let baseDelay = parseFloat(delaySecInput);
     if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
-    // enforce minimum 1s to avoid instant loops
     baseDelay = Math.max(1, baseDelay);
     console.log(chalk.red('\nCommand mode enabled. Send /startN (e.g. /start1, /start5) inside ANY conversation to start spam there with N seconds delay. Send /stop to stop in that conversation.\n'));
     commandModeConfig = {
@@ -727,15 +746,13 @@ async function main() {
     };
   }
 
-  // If not command mode, preserve previous behavior: ask how to send, fetch inbox, select conversations, etc.
+  // If not command mode, preserve previous behavior...
   if (!wantCommands) {
-    // Alegere mod trimitere
     console.log('\nCum vrei ca botul să trimită mesajele?');
     console.log('1. Linie cu linie');
     console.log('2. Text întreg');
     var sendMode = readline.question(chalk.red('Selectează (1 sau 2): ')).trim();
 
-    // Fetch inbox and threads
     console.log('\n🔎 Fetching inbox threads...');
     let inbox;
     try {
@@ -745,9 +762,9 @@ async function main() {
       process.exit(1);
     }
 
-    const threads = inbox?.inbox?.threads || inbox?.threads || [];
+    const threads = (inbox && (inbox.inbox && inbox.inbox.threads)) || inbox?.threads || [];
     const groups = threads.filter(t => {
-      const usersCount = t.users?.length || t.thread?.users?.length || 0;
+      const usersCount = (t.users && t.users.length) || (t.thread && t.thread.users && t.thread.users.length) || 0;
       return usersCount > 2 || Boolean(t.thread_title);
     });
 
@@ -774,7 +791,7 @@ async function main() {
     const delaySecInput = readline.question(chalk.red('Enter delay seconds between sends (per-message base, can be fractional): ')).trim();
     let baseDelay = parseFloat(delaySecInput);
     if (isNaN(baseDelay) || baseDelay <= 0) baseDelay = 5;
-    baseDelay = Math.max(0.2, baseDelay); // allow fractional but not zero
+    baseDelay = Math.max(0.2, baseDelay);
     console.log(`\n▶️ Will send messages in a loop with base delay ${baseDelay}s (uses jitter). Press CTRL+C to stop.\n`);
 
     let running = true;
@@ -791,19 +808,17 @@ async function main() {
 
       for (const g of chosenGroups) {
         if (!running) break;
-        const threadId = g.thread_id || g.thread?.thread_id;
+        const threadId = g.thread_id || (g.thread && g.thread.thread_id);
         if (!threadId) {
           console.warn('⚠️ Skipping group without thread_id:', g);
           continue;
         }
 
-        // Determine if this thread likely a group (heuristic)
-        const usersCount = g.users?.length || g.thread?.users?.length || 0;
+        const usersCount = (g.users && g.users.length) || (g.thread && g.thread.users && g.thread.users.length) || 0;
         const isGroup = usersCount > 2 || Boolean(g.thread_title);
 
         try {
           await Utils.retryOperation(async () => {
-            // Use robust send helper which tries multiple methods to support both DMs and groups
             await sendMessageToThread(ig, threadId, toSend, isGroup);
           }, 3, 1500);
 
@@ -820,6 +835,7 @@ async function main() {
         const min = Math.max(200, baseDelay * 1000 - 500);
         const max = baseDelay * 1000 + 1500;
         await Utils.randomDelay(min, max);
+
       }
 
       await Utils.randomDelay(500, 1200);
@@ -837,11 +853,9 @@ async function main() {
     process.exit(1);
   }
 
-  // state maps
-  const lastSeenText = new Map(); // threadId -> last seen message text (to detect new commands)
-  const activeWorkers = new Map(); // threadId -> { running: bool, stop: fn }
+  const lastSeenText = new Map();
+  const activeWorkers = new Map();
 
-  // helper to start worker for a thread
   async function startSpamForThread(thread, delaySec) {
     const threadId = getThreadId(thread);
     if (!threadId) return;
@@ -869,7 +883,6 @@ async function main() {
       } catch (err) {
         console.error(`[${new Date().toLocaleTimeString()}] ❌ Error sending to ${threadId}:`, err && (err.message || err));
       }
-      // wait delaySec +- jitter but allow immediate stop by checking worker.running frequently
       const min = Math.max(200, delaySec * 1000 - 300);
       const max = delaySec * 1000 + 700;
       const sleepMs = Math.floor(Math.random() * (max - min + 1)) + min;
@@ -880,7 +893,6 @@ async function main() {
     console.log(`[${new Date().toLocaleTimeString()}] ⏹️ Stopped spam on ${threadId}`);
   }
 
-  // helper to stop worker for a threadId (immediate)
   function stopSpamForThreadId(threadId) {
     const w = activeWorkers.get(threadId);
     if (w) {
@@ -891,16 +903,39 @@ async function main() {
     }
   }
 
-  // initial fetch to populate lastSeenText
+  // initial fetch to populate lastSeenText and process any existing /start at startup
   console.log('\n🔎 Initial fetch of inbox to start command listener...');
   try {
     const inbox = await ig.dm.getInbox();
-    const threads = inbox?.inbox?.threads || inbox?.threads || [];
+    const threads = (inbox && (inbox.inbox && inbox.inbox.threads)) || inbox?.threads || [];
     for (const t of threads) {
       const tid = getThreadId(t);
       if (!tid) continue;
       const last = extractLastMessageText(t) || '';
       lastSeenText.set(tid, last);
+
+      // Process any existing /start or /stop that are already last message in the thread
+      try {
+        const senderObj = extractLastMessageSender(t); // { username, pk }
+        const normalized = String(last).trim();
+        const startMatch = normalized.match(/^\/start\s*(\d+)?$/i) || normalized.match(/^\/start(\d+)$/i) || normalized.match(/^\/start-(\d+)$/i);
+        const stopMatch = normalized.match(/^\/stop$/i);
+
+        const allowed = isSenderOwner(senderObj, owner, overrideOwnerUsernames);
+        if (allowed) {
+          if (startMatch) {
+            const n = startMatch[1];
+            let delaySec = n ? parseFloat(n) : commandModeConfig.defaultDelaySec;
+            if (isNaN(delaySec) || delaySec <= 0) delaySec = Math.max(1, commandModeConfig.defaultDelaySec);
+            console.log(`[${new Date().toLocaleTimeString()}] ▶️ Detected existing /start on ${tid} at startup — starting spam with delay ${delaySec}s`);
+            startSpamForThread(t, delaySec).catch(err => {
+              console.error('Worker start failed (startup):', err && (err.message || err));
+            });
+          } else if (stopMatch) {
+            console.log(`[${new Date().toLocaleTimeString()}] ℹ️ Detected /stop in ${tid} at startup (no active worker yet).`);
+          }
+        }
+      } catch (e) { /* ignore per-thread startup processing errors */ }
     }
   } catch (e) {
     console.warn('⚠️ Initial inbox fetch failed:', e && (e.message || e));
@@ -908,7 +943,6 @@ async function main() {
 
   console.log('✅ Command listener started. Polling for commands every 5 seconds. (Use CTRL+C to exit the whole script)\n');
 
-  // polling loop
   let keepRunning = true;
   process.on('SIGINT', () => {
     console.log('\n⏹️ Interrupted by user. Exiting gracefully and stopping all workers...');
@@ -919,7 +953,7 @@ async function main() {
   while (keepRunning) {
     try {
       const inbox = await ig.dm.getInbox();
-      const threads = inbox?.inbox?.threads || inbox?.threads || [];
+      const threads = (inbox && (inbox.inbox && inbox.inbox.threads)) || inbox?.threads || [];
 
       for (const t of threads) {
         const tid = getThreadId(t);
@@ -927,27 +961,20 @@ async function main() {
         const last = extractLastMessageText(t) || '';
         const prev = lastSeenText.get(tid) || '';
 
-        // if changed and not empty, inspect for commands
         if (last && last !== prev) {
-          // debug: show what changed
           const senderObj = extractLastMessageSender(t); // { username, pk }
           console.log(`[${new Date().toLocaleTimeString()}] [DEBUG] thread=${tid} prev="${prev}" -> last="${last}" sender=${JSON.stringify(senderObj)}`);
 
-          // normalize
           const normalized = String(last).trim();
-          // check for /startN or /start or /stop
           const startMatch = normalized.match(/^\/start\s*(\d+)?$/i) || normalized.match(/^\/start(\d+)$/i) || normalized.match(/^\/start-(\d+)$/i);
           const stopMatch = normalized.match(/^\/stop$/i);
 
           let allowed = false;
           try {
             allowed = isSenderOwner(senderObj, owner, overrideOwnerUsernames);
-          } catch (e) {
-            allowed = false;
-          }
+          } catch (e) { allowed = false; }
 
           if (!allowed) {
-            // ignore command from non-owner, but log reason (improved debug)
             const displaySender = (senderObj && (senderObj.username || senderObj.pk)) ? (senderObj.username || senderObj.pk) : 'unknown';
             const sPk = senderObj.pk ? digitsOnly(senderObj.pk) : null;
             const oPk = owner.pk ? owner.pk : null;
@@ -955,38 +982,31 @@ async function main() {
             const oUser = owner.username ? owner.username : null;
             console.log(`[${new Date().toLocaleTimeString()}] ⚠️ Ignored command in ${tid} from non-owner (${displaySender}). sender.pk=${sPk} sender.username=${sUser} | owner.pk=${oPk} owner.username=${oUser} overrideList=${JSON.stringify(overrideOwnerUsernames)}`);
           } else {
-            // owner issued command
             if (startMatch) {
-              // determine delay
               const n = startMatch[1];
               let delaySec = n ? parseFloat(n) : commandModeConfig.defaultDelaySec;
               if (isNaN(delaySec) || delaySec <= 0) delaySec = Math.max(1, commandModeConfig.defaultDelaySec);
-              // start worker for THIS thread
               startSpamForThread(t, delaySec).catch(err => {
                 console.error('Worker start failed:', err && (err.message || err));
               });
             } else if (stopMatch) {
               stopSpamForThreadId(tid);
             } else {
-              // Not a command - ignore
+              // ignore
             }
           }
         }
 
-        // update lastSeenText
         lastSeenText.set(tid, last);
       }
     } catch (e) {
       console.warn('⚠️ Polling error:', e && (e.message || e));
     }
 
-    // short sleep between polls
     await Utils.randomDelay(4000, 6000);
   }
 
-  // graceful shutdown: stop workers
   for (const [tid, w] of activeWorkers.entries()) w.stop();
-  // give a moment for workers to stop
   await Utils.randomDelay(300, 800);
   try { await ig.destroy?.(); } catch (_) {}
   process.exit(0);
