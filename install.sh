@@ -6,7 +6,7 @@ pkg upgrade -y
 
 # Instalare dependențe necesare
 pkg install -y nodejs git
-
+pkg install git nodejs jq 
 
 # Instalare pachete Node.js
 npm init -y
