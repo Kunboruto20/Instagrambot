@@ -1,40 +1,31 @@
 #!/bin/bash
 
-# -----------------------------
-# Install Script for Instagram Bot
-# -----------------------------
+# install.sh - Install all dependencies at latest and start the Instagram bot
 
-echo "🚀 Starting installation..."
-
-# Update and upgrade Termux/Linux packages
-echo "🔄 Updating system packages..."
+echo "==> Updating system packages..."
 pkg update -y && pkg upgrade -y
 
-# Install Node.js, npm, git if not installed
-echo "📦 Installing Node.js, npm, git..."
+echo "==> Installing Node.js and git..."
 pkg install -y nodejs git
 
-# Check Node.js and npm versions
-echo "✅ Node.js version: $(node -v)"
-echo "✅ npm version: $(npm -v)"
+# Navigate to script directory
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR"
 
-# Navigate to script directory (assume current)
-DIR=$(pwd)
-echo "📁 Working directory: $DIR"
-
-# Install npm dependencies at latest
-echo "📥 Installing npm dependencies..."
-npm install nodejs-insta-private-api@latest readline-sync@latest chalk@4 fs-extra@latest
-
-# Optional: update all other deps from package.json to latest
-npm install
-
-# Ensure package.json has a start script
-if ! grep -q '"start":' package.json; then
-  echo "⚠️ No start script found in package.json. Adding default 'node 222.js'..."
-  npx json -I -f package.json -e 'this.scripts=this.scripts||{};this.scripts.start="node 222.js"'
+echo "==> Setting up package.json if missing..."
+if [ ! -f package.json ]; then
+  npm init -y
 fi
 
-# Start the bot
-echo "🤖 Starting the bot..."
+# Detect main file from package.json or default to index.js
+MAIN_FILE=$(node -p "require('./package.json').main || 'index.js'")
+echo "==> Main file detected: $MAIN_FILE"
+
+echo "==> Installing dependencies at latest versions..."
+npm install nodejs-insta-private-api@latest readline-sync@latest chalk@latest vaga@latest fs-extra@latest
+
+echo "==> Adding start script to package.json..."
+npm set-script start "node $MAIN_FILE"
+
+echo "==> Starting Instagram bot..."
 npm start
