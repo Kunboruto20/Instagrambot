@@ -1,11 +1,12 @@
 /**
  * index.js
- * Instagram Bot Gyovanny - converted to nodejs-insta-private-api (realtime removed)
+ * Instagram Bot Gyovanny - converted to nodejs-insta-private-api (with robust retry + polling only)
  *
  * Notes:
- *  - Uses: nodejs-insta-private-api (README-based API calls)
- *  - Preserves: /startN, /stop, polling, session save/load, line-order deterministic reading
- *  - Realtime functionality REMOVED per request (polling-only)
+ *  - Uses: nodejs-insta-private-api
+ *  - Removed: realtime (MQTT) entirely (per request)
+ *  - Added: retry/backoff for sends & inbox fetches, deterministic file-line reading
+ *  - Keeps: /startN, /stop, owner.json, session save/load, Termux-friendly
  */
 
 const { IgApiClient } = require('nodejs-insta-private-api');
@@ -38,25 +39,75 @@ console.log(chalk.red.bold('=====================================\n'));
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function now() { return new Date().toLocaleString(); }
 
+// ---------- retry/backoff helpers ----------
+function isRateLimitError(err) {
+  if (!err) return false;
+  const name = String(err.name || '').toLowerCase();
+  const msg = String(err.message || '').toLowerCase();
+  if (err && err.statusCode === 429) return true;
+  if (msg.includes('rate') || msg.includes('429') || msg.includes('too many') || name.includes('ratelimit') || name.includes('spam')) return true;
+  return false;
+}
+function isTransientNetworkError(err) {
+  if (!err) return false;
+  const code = String(err.code || '').toLowerCase();
+  if (['ecoff', 'econnreset', 'ecancel', 'ehostunreach', 'enetdown', 'etimedout', 'enotfound', 'econnrefused'].some(c => code.includes(c))) return true;
+  const msg = String(err.message || '').toLowerCase();
+  if (msg.includes('socket hang up') || msg.includes('socket') || msg.includes('tls') || msg.includes('network') || msg.includes('timeout')) return true;
+  return false;
+}
+
+/**
+ * retryWithBackoff(fn)
+ * - fn: async function to call
+ * - Behavior: infinite loop on rate-limit or transient network errors with exponential backoff (capped).
+ * - For non-transient errors, rethrows so callers can handle/log them.
+ * This strategy keeps the bot alive (will keep retrying on transient conditions).
+ */
+async function retryWithBackoff(fn, opts = {}) {
+  const base = Math.max(500, opts.baseDelay || 2000); // ms
+  const max = Math.max(base, opts.maxDelay || MAX_429_BACKOFF_MS);
+  let attempt = 0;
+  let delay = base;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempt++;
+      const rate = isRateLimitError(err);
+      const net = isTransientNetworkError(err);
+      if (rate || net) {
+        const human = rate ? 'RATE LIMIT / SPAM' : 'TRANSIENT NETWORK';
+        console.log(chalk.red(`[retry] ${human} error on attempt ${attempt}: ${err && err.message ? err.message : String(err)} — backing off ${delay}ms...`));
+        await sleep(delay + Math.floor(Math.random() * 400));
+        delay = Math.min(max, Math.floor(delay * 2));
+        continue; // retry indefinitely for these classes
+      } else {
+        // Not a transient/rate-limit error — rethrow (caller may catch)
+        throw err;
+      }
+    }
+  }
+}
+
 // ---------- session helpers using nodejs-insta-private-api ----------
 async function saveSession(ig) {
   try {
     if (!ig) return;
-    // ig.saveSession returns a plain object representing session
     if (typeof ig.saveSession === 'function') {
       const sessionObj = await ig.saveSession();
-      if (!sessionObj) return;
-      await fs.writeFile(SESSION_FILE, JSON.stringify(sessionObj, null, 2), 'utf8');
-      console.log(chalk.red(`[session] Saved session to ${SESSION_FILE}`));
-      return;
-    }
-    // fallback: try state-based serialization if available
-    if (ig.state && typeof ig.state.serialize === 'function') {
-      const serialized = await ig.state.serialize();
-      delete serialized.constants;
-      await fs.writeFile(SESSION_FILE, JSON.stringify(serialized, null, 2), 'utf8');
-      console.log(chalk.red(`[session] Saved session to ${SESSION_FILE}`));
-      return;
+      if (sessionObj) {
+        await fs.writeFile(SESSION_FILE, JSON.stringify(sessionObj, null, 2), 'utf8');
+        console.log(chalk.red(`[session] Saved session to ${SESSION_FILE}`));
+      }
+    } else {
+      // fallback: if library doesn't expose saveSession, try serializing state property
+      if (ig.state && typeof ig.state.serialize === 'function') {
+        const serialized = await ig.state.serialize();
+        delete serialized.constants;
+        await fs.writeFile(SESSION_FILE, JSON.stringify(serialized, null, 2), 'utf8');
+        console.log(chalk.red(`[session] Saved session (fallback) to ${SESSION_FILE}`));
+      }
     }
   } catch (err) {
     console.log(chalk.red('[session] Failed to save session:'), err && err.message ? err.message : err);
@@ -70,19 +121,18 @@ async function tryLoadSessionOnly(ig) {
     const session = JSON.parse(raw);
     if (typeof ig.loadSession === 'function') {
       await ig.loadSession(session);
-      // validate
-      const valid = typeof ig.isSessionValid === 'function' ? await ig.isSessionValid().catch(() => false) : true;
-      if (!valid) throw new Error('session invalid according to ig.isSessionValid');
-      console.log(chalk.red(`[session] Loaded session from ${SESSION_FILE}`));
-      return true;
-    }
-    // fallback: try state.deserialize
-    if (ig.state && typeof ig.state.deserialize === 'function') {
+    } else if (ig.state && typeof ig.state.deserialize === 'function') {
       await ig.state.deserialize(session);
-      console.log(chalk.red(`[session] Deserialized session from ${SESSION_FILE}`));
-      return true;
+    } else {
+      throw new Error('No session load method available on ig client');
     }
-    return false;
+    // optional validation
+    if (typeof ig.isSessionValid === 'function') {
+      const valid = await ig.isSessionValid().catch(() => false);
+      if (!valid) throw new Error('session invalid');
+    }
+    console.log(chalk.red(`[session] Loaded session from ${SESSION_FILE}`));
+    return true;
   } catch (err) {
     console.log(chalk.red('[session] Failed to load session:'), err && err.message ? err.message : err);
     return false;
@@ -108,7 +158,7 @@ async function loadOwner() {
   }
 }
 
-// ---------- util functions (same as original) ----------
+// ---------- util functions ----------
 function parseStartCmd(text) {
   if (!text) return null;
   const m = text.trim().match(/^\/start(\d*\.?\d*)$/i);
@@ -151,7 +201,7 @@ function findSessionId(obj) {
   return null;
 }
 
-// helpers for message extraction (copied/adapted)
+// helpers for message extraction
 function extractFromUserIdFromTopItem(top) {
   try {
     if (!top) return null;
@@ -198,7 +248,7 @@ function extractTextFromTopItem(top) {
   } catch (e) { return null; }
 }
 
-// boxed red log
+// boxed red log for sent spam
 function boxedSentLog(threadName, txt) {
   const line1 = '─────────────── SPAM SENT ✅ ───────────────';
   const line3 = `Grup: ${threadName}`;
@@ -237,34 +287,42 @@ function getNextLine(lines, state) {
   return { line: '', nextIdx };
 }
 
-// ---------- makeThreadEntity wrapper for nodejs lib ----------
+// ---------- makeThreadEntity wrapper for nodejs lib (with retry) ----------
 function makeThreadEntityFactory(ig) {
-  // Returns a factory that given threadId returns object with broadcastText(txt)
   return function makeThreadEntity(threadIdOrUsers) {
     return {
       broadcastText: async function (txt) {
-        try {
+        // Use retryWithBackoff for underlying send operations
+        return await retryWithBackoff(async () => {
+          // If looks like a thread id (string)
           if (typeof threadIdOrUsers === 'string') {
             const tid = threadIdOrUsers;
+            // Try sendToGroup if available
             if (typeof ig.dm.sendToGroup === 'function') {
               try {
                 await ig.dm.sendToGroup({ threadId: tid, message: txt });
                 return;
               } catch (e) {
-                // fallthrough to try dm.send
+                // continue to other fallbacks
               }
             }
+            // Fallback: dm.send (to username or id)
             if (typeof ig.dm.send === 'function') {
               await ig.dm.send({ to: tid, message: txt });
               return;
             }
           }
+          // If array of usernames/users
           if (Array.isArray(threadIdOrUsers)) {
             if (typeof ig.direct !== 'undefined' && typeof ig.direct.createGroupThread === 'function') {
-              const group = await ig.direct.createGroupThread(threadIdOrUsers, 'Group');
-              if (group && group.thread_id && typeof ig.dm.sendToGroup === 'function') {
-                await ig.dm.sendToGroup({ threadId: group.thread_id, message: txt });
-                return;
+              try {
+                const group = await ig.direct.createGroupThread(threadIdOrUsers, 'Group');
+                if (group && group.thread_id && typeof ig.dm.sendToGroup === 'function') {
+                  await ig.dm.sendToGroup({ threadId: group.thread_id, message: txt });
+                  return;
+                }
+              } catch (e) {
+                // fallback to dm.send to first
               }
             }
             if (threadIdOrUsers.length && typeof ig.dm.send === 'function') {
@@ -272,10 +330,22 @@ function makeThreadEntityFactory(ig) {
               return;
             }
           }
+          // object with thread_id property
+          if (threadIdOrUsers && typeof threadIdOrUsers === 'object') {
+            const tid = threadIdOrUsers.thread_id || threadIdOrUsers.threadId || threadIdOrUsers.id || null;
+            if (tid && typeof ig.dm.sendToGroup === 'function') {
+              await ig.dm.sendToGroup({ threadId: tid, message: txt });
+              return;
+            }
+            // try dm.send with username property
+            const uname = threadIdOrUsers.username || threadIdOrUsers.user || null;
+            if (uname && typeof ig.dm.send === 'function') {
+              await ig.dm.send({ to: uname, message: txt });
+              return;
+            }
+          }
           throw new Error('No suitable send method available for thread entity');
-        } catch (e) {
-          throw e;
-        }
+        });
       }
     };
   };
@@ -285,7 +355,7 @@ function makeThreadEntityFactory(ig) {
 async function fetchLatestTextFromThreadNode(igClient, threadId) {
   try {
     if (typeof igClient.dm.getThread === 'function') {
-      const resp = await igClient.dm.getThread(threadId);
+      const resp = await retryWithBackoff(() => igClient.dm.getThread(threadId));
       const thread = resp && (resp.thread || resp);
       const items = (thread && (thread.items || thread.thread?.items || thread.thread_items)) || [];
       const arr = Array.isArray(items) ? items.slice().reverse() : [];
@@ -309,6 +379,24 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
   }
 }
 
+// ---------- safe inbox fetch ----------
+async function getInboxSafe(ig) {
+  // returns object like { inbox: { threads: [...] } } or equivalent
+  try {
+    if (typeof ig.dm.getInbox === 'function') {
+      return await retryWithBackoff(() => ig.dm.getInbox());
+    } else if (typeof ig.direct !== 'undefined' && typeof ig.direct.getInbox === 'function') {
+      return await retryWithBackoff(() => ig.direct.getInbox());
+    } else {
+      throw new Error('No inbox method available on client');
+    }
+  } catch (e) {
+    // log and return an empty shape so rest of code continues
+    console.log(chalk.red('[inbox] Failed to fetch inbox (after retries):'), e && e.message ? e.message : e);
+    return { inbox: { threads: [] } };
+  }
+}
+
 // ---------- main ----------
 (async () => {
   try {
@@ -329,7 +417,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
       username = readline.question('Enter your Instagram username: ').trim();
       password = readline.question('Enter your Instagram password: ', { hideEchoBack: true }).trim();
       try {
-        await ig.login({ username, password }).catch(async (err) => { throw err; });
+        await retryWithBackoff(() => ig.login({ username, password }));
         console.log(chalk.red(`✅ Logged in as ${username}`));
         await saveSession(ig);
         hadSession = true;
@@ -342,6 +430,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
       try {
         const valid = (typeof ig.isSessionValid === 'function') ? await ig.isSessionValid().catch(()=>false) : true;
         if (!valid) throw new Error('Session invalid');
+        // best-effort try to get username from session or ask user (fallback)
         try {
           if (typeof ig.account !== 'undefined' && typeof ig.account.currentUser === 'function') {
             const me = await ig.account.currentUser().catch(()=>null);
@@ -354,7 +443,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
         username = readline.question('Enter your Instagram username: ').trim();
         password = readline.question('Enter your Instagram password: ', { hideEchoBack: true }).trim();
         try {
-          await ig.login({ username, password });
+          await retryWithBackoff(() => ig.login({ username, password }));
           console.log(chalk.red(`✅ Logged in as ${username}`));
           await saveSession(ig);
           hadSession = true;
@@ -376,7 +465,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
       if (ownerObj.ownerUsername) {
         try {
           if (typeof ig.user.infoByUsername === 'function') {
-            const info = await ig.user.infoByUsername(ownerObj.ownerUsername).catch(()=>null);
+            const info = await retryWithBackoff(() => ig.user.infoByUsername(ownerObj.ownerUsername)).catch(()=>null);
             if (info && (info.pk || info.id)) {
               allowedOwnerIds.add(String(info.pk || info.id));
               ownerObj.ownerId = String(info.pk || info.id);
@@ -398,7 +487,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
             me = await ig.account.currentUser().catch(()=>null);
           }
           if (!me && username) {
-            me = await ig.user.infoByUsername(username).catch(()=>null);
+            me = await retryWithBackoff(() => ig.user.infoByUsername(username)).catch(()=>null);
           }
           if (me && (me.pk || me.id)) {
             const id = String(me.pk || me.id);
@@ -411,7 +500,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
             console.log(chalk.red('[owner] Nu am putut determina ID-ul contului curent; te rog introdu username manual.'));
             const ownerUsername = readline.question('Introdu username-ul owner (ex: alt_user): ').trim();
             try {
-              const info = await ig.user.infoByUsername(ownerUsername).catch(()=>null);
+              const info = await retryWithBackoff(() => ig.user.infoByUsername(ownerUsername)).catch(()=>null);
               if (info && (info.pk || info.id)) {
                 const id = String(info.pk || info.id);
                 ownerObj = { ownerId: id, ownerUsername: ownerUsername };
@@ -431,7 +520,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
       } else {
         const ownerUsername = readline.question('Introdu username-ul owner (ex: alt_user): ').trim();
         try {
-          const info = await ig.user.infoByUsername(ownerUsername).catch(()=>null);
+          const info = await retryWithBackoff(() => ig.user.infoByUsername(ownerUsername)).catch(()=>null);
           if (info && (info.pk || info.id)) {
             const id = String(info.pk || info.id);
             ownerObj = { ownerId: id, ownerUsername: ownerUsername };
@@ -457,7 +546,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
         if (typeof ig.account !== 'undefined' && typeof ig.account.currentUser === 'function') {
           me = await ig.account.currentUser().catch(()=>null);
         }
-        if (!me && username) me = await ig.user.infoByUsername(username).catch(()=>null);
+        if (!me && username) me = await retryWithBackoff(() => ig.user.infoByUsername(username)).catch(()=>null);
         if (me && (me.pk || me.id)) {
           const id = String(me.pk || me.id);
           allowedOwnerIds.add(id);
@@ -520,7 +609,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
         let threadObj = null;
         try {
           if (typeof ig.dm.getThread === 'function') {
-            const threadResp = await ig.dm.getThread(threadId).catch(()=>null);
+            const threadResp = await retryWithBackoff(() => ig.dm.getThread(threadId)).catch(()=>null);
             threadObj = threadResp && (threadResp.thread || threadResp);
           }
         } catch (e) {}
@@ -562,10 +651,11 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
           } catch (err) {
             const msg = err && err.message ? err.message : String(err);
             console.log(chalk.red(`[error send] ${threadId}: ${msg}`));
-            if (err && (err.statusCode === 429 || (err.name && err.name.toLowerCase().includes('spam')))) {
+            if (isRateLimitError(err)) {
               console.log(chalk.red(`[rate] 429/spam detected. Backing off thread ${threadId}`));
               await sleep(Math.min(MAX_429_BACKOFF_MS, PER_THREAD_MIN_INTERVAL * 4));
             } else {
+              // transient network errors already retried by retryWithBackoff inside broadcast; here catch others and sleep
               await sleep(2000);
             }
           }
@@ -591,10 +681,10 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
           if (!allowedOwnerIds.has(candidate)) {
             try {
               if (!/^\d+$/.test(candidate) && typeof ig.user.infoByUsername === 'function') {
-                const ui = await ig.user.infoByUsername(candidate).catch(()=>null);
+                const ui = await retryWithBackoff(() => ig.user.infoByUsername(candidate)).catch(()=>null);
                 if (ui && (ui.pk || ui.id)) candidate = String(ui.pk || ui.id);
               } else if (/^\d+$/.test(candidate) && typeof ig.user.info === 'function') {
-                const ui2 = await ig.user.info(candidate).catch(()=>null);
+                const ui2 = await retryWithBackoff(() => ig.user.info(candidate)).catch(()=>null);
                 if (ui2 && (ui2.pk || ui2.id)) candidate = String(ui2.pk || ui2.id);
               }
             } catch (e) {}
@@ -652,7 +742,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
       async function startPollingLoop() {
         const lastSeen = new Map();
         try {
-          const initial = (typeof ig.dm.getInbox === 'function') ? await ig.dm.getInbox().catch(()=>({ inbox: { threads: [] } })) : { inbox: { threads: [] } };
+          const initial = await getInboxSafe();
           const threads = initial && (initial.inbox && initial.inbox.threads) ? initial.inbox.threads : (initial.threads || []);
           for (const t of threads) {
             const canonicalId = t.thread_id || t.threadId || t.id || null;
@@ -666,7 +756,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
         } catch (e) {}
         pollingIntervalRef = setInterval(async () => {
           try {
-            const inboxResp = (typeof ig.dm.getInbox === 'function') ? await ig.dm.getInbox().catch(()=>({ inbox: { threads: [] } })) : { inbox: { threads: [] } };
+            const inboxResp = await getInboxSafe();
             const threads = inboxResp && (inboxResp.inbox && inboxResp.inbox.threads) ? inboxResp.inbox.threads : (inboxResp.threads || []);
             for (const t of threads) {
               try {
@@ -710,7 +800,6 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
         }, POLLING_INTERVAL_MS);
       }
 
-      // Polling-only mode (realtime removed)
       console.log(chalk.red('[polling] Using polling-only mode — checking inbox every few seconds for owner commands'));
       await startPollingLoop();
 
@@ -740,21 +829,21 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
 
     // Branch no-commands: list threads and send to selected threads (preserve order)
     console.log(chalk.red('\nAi ales FARA comenzi. Voi afișa grupurile/conversațiile disponibile. Alege ce thread-uri vrei să trimiți mesaje.\n'));
-    let inbox = [];
+    let inboxResp = [];
     try {
-      const resp = (typeof ig.dm.getInbox === 'function') ? await ig.dm.getInbox().catch(()=>({ inbox: { threads: [] } })) : { inbox: { threads: [] } };
-      inbox = resp && (resp.inbox && resp.inbox.threads) ? resp.inbox.threads : (resp.threads || []);
+      const resp = await getInboxSafe();
+      inboxResp = resp && (resp.inbox && resp.inbox.threads) ? resp.inbox.threads : (resp.threads || []);
     } catch (e) {
       console.log(chalk.red('[polling] Eroare la fetch inbox:'), e && e.message ? e.message : e);
-      inbox = [];
+      inboxResp = [];
     }
-    if (!Array.isArray(inbox) || inbox.length === 0) {
+    if (!Array.isArray(inboxResp) || inboxResp.length === 0) {
       console.log(chalk.red('Inbox gol sau nu s-au putut obține thread-urile. Ies.'));
       process.exit(1);
     }
 
     console.log(chalk.red('Lista thread-uri disponibile:'));
-    inbox.forEach((t, i) => {
+    inboxResp.forEach((t, i) => {
       const display = (t.thread_title && String(t.thread_title).trim()) || (t.users && t.users[0] && (t.users[0].username || t.users[0].pk)) || (t.thread_id || t.id) || '(no title)';
       console.log(chalk.red(`${String(i+1).padStart(2,' ')}. ${display}`));
     });
@@ -783,12 +872,12 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
       }
       return Array.from(set).sort((a,b)=>a-b);
     }
-    const indices = parseSelection(selection, inbox.length);
+    const indices = parseSelection(selection, inboxResp.length);
     if (!indices.length) {
       console.log(chalk.red('Nu am identificat indexuri valide. Ies.'));
       process.exit(1);
     }
-    const chosenThreads = indices.map(i => inbox[i]).filter(Boolean);
+    const chosenThreads = indices.map(i => inboxResp[i]).filter(Boolean);
     console.log(chalk.red(`Ai selectat ${chosenThreads.length} thread(s).`));
 
     // Ask text path and delay seconds
@@ -834,7 +923,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
 
     console.log(chalk.red('\nPornesc trimiterea în buclă către thread-urile selectate. Oprește cu Ctrl+C.\n'));
 
-    // ensure sessionid best-effort: try ig.saveSession() content search if available
+    // ensure sessionid best-effort
     async function ensureSessionIdPresent(igClient) {
       const start = Date.now();
       while (Date.now() - start < SESSIONID_WAIT_MAX_MS) {
@@ -848,7 +937,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
               return true;
             }
           } else if (igClient.state && typeof igClient.state.serialize === 'function') {
-            const serialized = await igClient.state.serialize();
+            const serialized = await igClient.state.serialize().catch(()=>null);
             const sid = findSessionId(serialized);
             if (sid) {
               await fs.writeFile(SESSION_FILE, JSON.stringify(serialized, null, 2), 'utf8');
@@ -902,7 +991,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
           state.idx = nextIdx;
           if (!txt || txt.replace(/\s/g, '').length === 0) { await sleep(100); continue; }
           console.log(chalk.red(`[next send] ${now()} -> ${threadId} (idx ${state.idx})`));
-          await ent.broadcastText(txt);
+          await ent.broadcastText(txt); // broadcastText has retryWithBackoff internally
           state.lastSentAt = Date.now();
           globalLastSend = state.lastSentAt;
           state.idx++;
@@ -914,7 +1003,7 @@ async function fetchLatestTextFromThreadNode(igClient, threadId) {
         } catch (err) {
           const msg = err && err.message ? err.message : String(err);
           console.log(chalk.red(`[error send] ${state.threadId}: ${msg}`));
-          if (err && (err.statusCode === 429 || (err.name && err.name.toLowerCase().includes('spam')))) {
+          if (isRateLimitError(err)) {
             const backoff = Math.min(MAX_429_BACKOFF_MS, PER_THREAD_MIN_INTERVAL * (state.backoffMultiplier || 1) * 4);
             globalBackoffUntil = Date.now() + backoff;
             state.backoffMultiplier = (state.backoffMultiplier || 1) * 2;
