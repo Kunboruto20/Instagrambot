@@ -1,45 +1,40 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/bin/bash
 
-echo "-------------------------------------"
-echo "  Instagram Bot Installer for Termux"
-echo "  By Gyovanny - Latest Dependencies"
-echo "-------------------------------------"
+# -----------------------------
+# Install Script for Instagram Bot
+# -----------------------------
 
-# Actualizare Termux
+echo "🚀 Starting installation..."
+
+# Update and upgrade Termux/Linux packages
+echo "🔄 Updating system packages..."
 pkg update -y && pkg upgrade -y
 
-# Dependențe OS
-pkg install -y nodejs-lts git python make clang openssl-tool
+# Install Node.js, npm, git if not installed
+echo "📦 Installing Node.js, npm, git..."
+pkg install -y nodejs git
 
-# Instalare npx fix
-npm install -g npm@latest
+# Check Node.js and npm versions
+echo "✅ Node.js version: $(node -v)"
+echo "✅ npm version: $(npm -v)"
 
-# Creare proiect
-[ ! -f package.json ] && npm init -y
+# Navigate to script directory (assume current)
+DIR=$(pwd)
+echo "📁 Working directory: $DIR"
 
-# Instalare pachete necesare
-echo "Instalez dependințe NPM (latest)..."
+# Install npm dependencies at latest
+echo "📥 Installing npm dependencies..."
+npm install nodejs-insta-private-api@latest readline-sync@latest chalk@4 fs-extra@latest
 
-npm install instagram-private-api@latest \
-            instagram_mqtt@latest \
-            readline-sync@latest \
-            chalk@latest \
-            fs-extra@latest \
-            mqtt@latest \
-            events@latest \
-            uuid@latest \
-            tslib@latest
+# Optional: update all other deps from package.json to latest
+npm install
 
-# Optional dev tools (nu afectează scriptul, dar ajută în viitor)
-npm install --save-dev typescript@latest ts-node@latest @types/node@latest
-
-# Creare script start în package.json dacă nu există
-if ! grep -q '"start"' package.json; then
-  jq '.scripts.start="node index.js"' package.json > tmp.$$.json && mv tmp.$$.json package.json
+# Ensure package.json has a start script
+if ! grep -q '"start":' package.json; then
+  echo "⚠️ No start script found in package.json. Adding default 'node 222.js'..."
+  npx json -I -f package.json -e 'this.scripts=this.scripts||{};this.scripts.start="node 222.js"'
 fi
 
-echo "-------------------------------------"
-echo " Instalare completă!"
-echo " Rulează botul cu:  node index.js"
-echo " sau:              npm start"
-echo "-------------------------------------"
+# Start the bot
+echo "🤖 Starting the bot..."
+npm start
