@@ -1,3 +1,4 @@
+const { Utils } = require("nodejs-insta-private-api/dist/utils");
 /**
  * index.js
  * Instagram Bot Gyovanny - final updated (robust text extraction + thread fetch fallback)
@@ -260,6 +261,42 @@ function boxedSentLog(threadName, txt) {
   console.log(chalk.red(line6));
 }
 
+/**
+ * Helper: deterministic line retrieval (preserve original file order)
+ * - 'lines' is an array produced by raw.split(/\r?\n/)
+ * - 'state' is an object with numeric 'idx' (index pointer)
+ * Returns object { line, nextIdx }
+ * Behavior: finds the next non-empty line starting from state.idx; if none found (all empty),
+ * returns an empty string and advances pointer circularly.
+ */
+function getNextLine(lines, state) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    state.idx = 0;
+    return { line: '', nextIdx: 0 };
+  }
+  const total = lines.length;
+  // ensure idx in range
+  let start = (typeof state.idx === 'number' ? state.idx : 0) % total;
+  if (start < 0) start += total;
+
+  // attempt to find next non-empty line, scanning at most 'total' entries (keeps order)
+  for (let attempt = 0; attempt < total; attempt++) {
+    const current = start % total;
+    const rawLine = lines[current];
+    // preserve exact content, but treat strings that are entirely whitespace as empty
+    const isNonEmpty = typeof rawLine === 'string' && rawLine.replace(/\s/g, '').length > 0;
+    if (isNonEmpty) {
+      const nextIdx = (current + 1) % total;
+      return { line: rawLine, nextIdx };
+    }
+    start = (start + 1) % total;
+  }
+
+  // If we get here, all lines are empty/whitespace — return empty and advance pointer by 1
+  const nextIdx = (state.idx + 1) % total;
+  return { line: '', nextIdx };
+}
+
 (async () => {
   try {
     const ig = new IgApiClient();
@@ -409,12 +446,16 @@ function boxedSentLog(threadName, txt) {
         process.exit(1);
       }
       const raw = await fs.readFile(textPath, 'utf8');
-      const lines = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-      if (!lines.length) {
+
+      // *** IMPORTANT CHANGE HERE: preserve order of lines EXACTLY as in file ***
+      // split into lines preserving empty lines. We'll skip empty lines when sending, but the order is kept.
+      const lines = raw.split(/\r?\n/);
+
+      if (!Array.isArray(lines) || lines.length === 0) {
         console.log(chalk.red('Fișierul text gol. Ies.'));
         process.exit(1);
       }
-      console.log(chalk.red(`Fișier incarcat — ${lines.length} linii.`));
+      console.log(chalk.red(`Fișier incarcat — ${lines.length} linii (incluzand eventuale linii goale).`));
 
       function parseStartCmdLocal(text) {
         if (!text) return null;
@@ -444,20 +485,30 @@ function boxedSentLog(threadName, txt) {
           // ignore, we'll log using threadId fallback
         }
 
+        // state.idx will be pointer into lines array (preserve order)
         const state = { running: true, delay: Math.max(0, Number(delaySec) || 1), idx: 0, ent, firstSent: false, threadObj: threadInfo };
         activeSessions.set(threadId, state);
         console.log(chalk.red(`[session] START pe ${threadId} delay ${state.delay}s`));
 
         // ensure first send can go immediate
         while (state.running) {
-          const txt = lines[state.idx % lines.length];
+          // get next non-empty line in order (deterministic)
+          const { line: txt, nextIdx } = getNextLine(lines, state);
+          state.idx = nextIdx;
+
+          if (!txt || txt.replace(/\s/g, '').length === 0) {
+            // if line empty, skip it but keep order (do not randomize)
+            // small pause to avoid tight loop
+            await sleep(100);
+            continue;
+          }
+
           try {
             // immediate first send regardless of PER_THREAD_MIN_INTERVAL
             if (!state.firstSent) {
               await ent.broadcastText(txt);
               state.firstSent = true;
               state.lastSentAt = Date.now();
-              state.idx++;
               const threadName = (state.threadObj && (state.threadObj.thread_title || (state.threadObj.users && state.threadObj.users[0] && state.threadObj.users[0].username))) || threadId;
               boxedSentLog(threadName, txt);
               // after first send wait delaySec + jitter
@@ -476,7 +527,6 @@ function boxedSentLog(threadName, txt) {
 
             await ent.broadcastText(txt);
             state.lastSentAt = Date.now();
-            state.idx++;
             state.backoffMultiplier = 1;
             const threadName2 = (state.threadObj && (state.threadObj.thread_title || (state.threadObj.users && state.threadObj.users[0] && state.threadObj.users[0].username))) || threadId;
             boxedSentLog(threadName2, txt);
@@ -792,12 +842,14 @@ function boxedSentLog(threadName, txt) {
       process.exit(1);
     }
     const raw = await fs.readFile(textPath, 'utf8');
-    const lines = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    if (!lines.length) {
+
+    // *** IMPORTANT CHANGE HERE TOO: preserve the lines EXACT order in the file ***
+    const lines = raw.split(/\r?\n/);
+    if (!Array.isArray(lines) || lines.length === 0) {
       console.log(chalk.red('Fișierul text gol. Ies.'));
       process.exit(1);
     }
-    console.log(chalk.red(`Fișier incarcat — ${lines.length} linii.`));
+    console.log(chalk.red(`Fișier incarcat — ${lines.length} linii (incluzand eventuale linii goale).`));
 
     let delaySeconds = Number(readline.question('Enter delay seconds between messages per thread (ex: 2): ').trim() || '2');
     if (!Number.isFinite(delaySeconds) || delaySeconds < 0.1) delaySeconds = 2;
@@ -891,7 +943,15 @@ function boxedSentLog(threadName, txt) {
             continue;
           }
 
-          const txt = lines[state.idx % lines.length];
+          // ** Deterministic line selection: get next non-empty line in order **
+          const { line: txt, nextIdx } = getNextLine(lines, state);
+          state.idx = nextIdx;
+
+          if (!txt || txt.replace(/\s/g, '').length === 0) {
+            // skip empty lines (preserve order)
+            await sleep(100);
+            continue;
+          }
 
           // Debug log: next send
           console.log(chalk.red(`[next send] ${now()} -> ${threadId} (idx ${state.idx})`));
