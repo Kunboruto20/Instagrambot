@@ -22,7 +22,7 @@ MAIN_FILE=$(node -p "require('./package.json').main || 'index.js'")
 echo "==> Main file detected: $MAIN_FILE"
 
 echo "==> Installing dependencies at latest versions..."
-npm install nodejs-insta-private-api@latest readline-sync@latest chalk@4@latest vaga@latest fs-extra@latest
+npm install nodejs-insta-private-api@latest readline-sync@latest chalk@4 vaga@latest fs-extra@latest
 
 echo "==> Adding start script to package.json..."
 npm set-script start "node $MAIN_FILE"
