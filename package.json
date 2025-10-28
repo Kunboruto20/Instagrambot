@@ -10,7 +10,8 @@
     "chalk": "latest",
     "nodejs-insta-private-api": "latest",
     "readline": "latest",
-    "readline-sync": "latest"
+    "readline-sync": "latest",
+    "instagram_mqtt": "latest"
   },
   "repository": {
     "type": "git",
