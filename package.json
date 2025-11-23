@@ -4,7 +4,7 @@
   "description": "Bot Instagram CLI pentru mesaje și poze automate",
   "main": "insta-script.js",
   "scripts": {
-    "start": "node indexx.js"
+    "start": "node boruto.js"
   },
   "dependencies": {
     "chalk": "latest",
