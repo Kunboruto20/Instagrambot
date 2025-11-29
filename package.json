@@ -2,7 +2,7 @@
   "name": "instagram-bot-boruto",
   "version": "1.0.0",
   "description": "Bot Instagram CLI pentru mesaje și poze automate",
-  "main": "insta-script.js",
+  "main": "bot.js",
   "scripts": {
     "start": "node boruto.js"
   },
